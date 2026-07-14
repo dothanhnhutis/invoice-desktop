@@ -1,0 +1,26 @@
+[workspace]
+members = ["apps/captcha", "libs/domain"]
+resolver = "3"
+
+[workspace.dependencies]
+reqwest = { version = "0.13.4", features = ["json", "cookies"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+open = "5.4"
+thiserror = "2.0.18"
+image = "0.25.10"
+imageproc = "0.27.0"
+resvg = "0.47.0"
+roxmltree = "0.21.1"                                             # parse SVG (nhẹ, nhanh, không cần build DOM)
+# hoặc xmltree = "0.10"     # nếu cần mutate
+
+
+[profile.release]
+# Tối ưu hóa file binary cho Production
+opt-level = 3     # Tối ưu hóa tốc độ tối đa
+lto = true        # Link Time Optimization (giảm kích thước file build)
+codegen-units = 1 # Giúp compiler tối ưu hóa tốt hơn
+panic = "abort"   # Giảm kích thước file bằng cách bỏ qua stack unwinding
+strip = true      # Loại bỏ các ký tự debug để file cực nhẹ
