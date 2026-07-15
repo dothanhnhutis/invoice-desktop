@@ -1,0 +1,15 @@
+[package]
+name = "captcha-core"
+version = "0.1.0"
+edition = "2024"
+
+# Core dùng chung cho các bin công cụ (apps/captcha) và desktop app (Tauri).
+# Chỉ chứa logic thuần: lỗi, tiền xử lý SVG, fetch captcha, nhận dạng (Solver).
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+image.workspace = true
+imageproc.workspace = true
+resvg.workspace = true

@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/captcha", "libs/domain"]
+members = ["apps/captcha", "libs/captcha", "libs/domain"]
 resolver = "3"
 
 [workspace.dependencies]

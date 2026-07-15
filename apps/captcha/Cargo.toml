@@ -4,14 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+captcha-core = { path = "../../libs/captcha" }
+tokio.workspace = true                         # runtime async cho label_tool (#[tokio::main])
+open.workspace = true                          # mở preview.html trong browser
+image.workspace = true                         # ghi template *.png trong lệnh `solver build`
 reqwest.workspace = true
-tokio.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-regex.workspace = true
-open.workspace = true
-thiserror.workspace = true
-image.workspace = true
-imageproc.workspace = true
-resvg.workspace = true
-roxmltree.workspace = true
