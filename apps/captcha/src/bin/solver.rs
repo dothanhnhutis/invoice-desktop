@@ -18,7 +18,10 @@ use captcha_core::{NORM, Solver, raster_binary};
 // Neo theo crate (baked lúc compile) — không phụ thuộc thư mục đang chạy lệnh.
 const DIR_DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/dataset");
 // Nơi mặc định ghi/đọc template = chỗ desktop (Tauri) sẽ bundle.
-const DIR_TMPL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../desktop/src-tauri/templates");
+const DIR_TMPL: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../invoice-desktop/src-tauri/templates"
+);
 
 fn dir_chars() -> PathBuf {
     Path::new(DIR_DATASET).join("chars")

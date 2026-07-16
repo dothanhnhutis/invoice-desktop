@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/captcha", "libs/captcha", "libs/domain"]
+members = ["apps/captcha", "apps/invoice-desktop/src-tauri", "libs/captcha", "libs/hddt", "libs/domain", "libs/store"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -15,6 +15,8 @@ imageproc = "0.27.0"
 resvg = "0.47.0"
 roxmltree = "0.21.1"                                             # parse SVG (nhẹ, nhanh, không cần build DOM)
 # hoặc xmltree = "0.10"     # nếu cần mutate
+rusqlite = { version = "0.32", features = ["bundled"] }         # SQLite bundled (không cần cài hệ thống)
+keyring = { version = "3", features = ["windows-native"] }      # lưu credential ở OS keychain
 
 
 [profile.release]

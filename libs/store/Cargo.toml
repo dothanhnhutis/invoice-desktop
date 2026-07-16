@@ -1,0 +1,9 @@
+[package]
+name = "store"
+version = "0.1.0"
+edition = "2024"
+
+# Lưu trữ cục bộ (SQLite bundled) cho hóa đơn + tiến độ đồng bộ.
+[dependencies]
+domain = { path = "../domain" }
+rusqlite.workspace = true

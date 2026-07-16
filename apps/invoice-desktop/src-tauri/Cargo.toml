@@ -1,0 +1,36 @@
+[package]
+name = "invoice-desktop"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "invoice_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logic dùng chung từ workspace
+captcha-core = { path = "../../../libs/captcha" } # Solver nhận dạng captcha
+hddt = { path = "../../../libs/hddt" }            # login tự giải captcha
+domain = { path = "../../../libs/domain" }        # Invoice, InvoiceFilter, SyncState
+store = { path = "../../../libs/store" }           # SQLite cục bộ
+reqwest.workspace = true                          # đặt tên kiểu reqwest::Client trong AppState
+tokio.workspace = true                            # tokio::sync::Mutex cho token
+keyring.workspace = true                          # lưu credential ở OS keychain
+chrono = "0.4"                                    # tính cửa sổ tháng + timestamp sync
+
+# [profile.release] định nghĩa ở root Cargo.toml (áp cho cả workspace).

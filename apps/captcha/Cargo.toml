@@ -5,8 +5,7 @@ edition = "2024"
 
 [dependencies]
 captcha-core = { path = "../../libs/captcha" }
-tokio.workspace = true                         # runtime async cho label_tool (#[tokio::main])
+hddt = { path = "../../libs/hddt" }            # login (bin login gọi vào)
+tokio.workspace = true                         # runtime async cho label_tool/login (#[tokio::main])
 open.workspace = true                          # mở preview.html trong browser
 image.workspace = true                         # ghi template *.png trong lệnh `solver build`
-reqwest.workspace = true
-serde.workspace = true

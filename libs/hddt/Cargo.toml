@@ -1,0 +1,13 @@
+[package]
+name = "hddt"
+version = "0.1.0"
+edition = "2024"
+
+# Client HTTP cho hoadondientu.gdt.gov.vn: login (tự giải captcha) + gọi API.
+# Dùng chung cho bin test CLI (apps/captcha) và desktop (Tauri).
+[dependencies]
+captcha-core = { path = "../captcha" }
+domain = { path = "../domain" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
