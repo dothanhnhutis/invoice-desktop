@@ -6,7 +6,7 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use chrono::{Local, Months, NaiveDate, Utc};
+use chrono::{Datelike, Local, Months, NaiveDate, Utc};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -90,29 +90,20 @@ async fn sync_once(app: &AppHandle) -> Result<(), SyncError> {
 
     let mut ss = state.db.get_sync_state().map_err(other)?;
 
-    // ----- Backfill: lùi 1 tháng/lần tới FLOOR -----
+    // ----- Backfill: lùi theo TỪNG THÁNG LỊCH tới FLOOR -----
+    // [01/07..hôm nay] → [01/06..30/06] → [01/05..31/05] → … → tháng của FLOOR.
     if !ss.backfill_done {
         if ss.newest_date.is_none() {
             ss.newest_date = Some(fmt_date(today));
         }
-        let mut window_end = ss
-            .oldest_date
-            .as_deref()
-            .and_then(parse_date)
-            .unwrap_or(today);
-
-        while window_end > floor {
-            let window_start = window_end
-                .checked_sub_months(Months::new(1))
-                .unwrap_or(floor)
-                .max(floor);
-
-            let saved = fetch_window(&state, window_start, window_end).await?;
-            ss.oldest_date = Some(fmt_date(window_start));
+        while let Some((start, end)) =
+            next_window(ss.oldest_date.as_deref().and_then(parse_date), today, floor)
+        {
+            let saved = fetch_window(&state, start, end).await?;
+            ss.oldest_date = Some(fmt_date(start));
             state.db.set_sync_state(&ss).map_err(other)?;
             emit_progress(app, &state, "backfill", &ss, saved);
 
-            window_end = window_start;
             tokio::time::sleep(THROTTLE).await;
         }
         ss.backfill_done = true;
@@ -223,4 +214,99 @@ fn fmt_date(d: NaiveDate) -> String {
 /// Định dạng ngày cho param `search`: `dd/MM/yyyyTHH:mm:ss`.
 fn fmt_search(d: NaiveDate, time: &str) -> String {
     format!("{}T{}", d.format("%d/%m/%Y"), time)
+}
+
+// --- Cửa sổ theo tháng lịch --------------------------------------------------
+
+fn first_of_month(d: NaiveDate) -> NaiveDate {
+    d.with_day(1).unwrap()
+}
+
+fn last_of_month(d: NaiveDate) -> NaiveDate {
+    first_of_month(d)
+        .checked_add_months(Months::new(1))
+        .and_then(|x| x.pred_opt())
+        .unwrap_or(d)
+}
+
+fn prev_month_first(d: NaiveDate) -> NaiveDate {
+    first_of_month(d)
+        .checked_sub_months(Months::new(1))
+        .unwrap_or(d)
+}
+
+/// Cửa sổ tháng lịch kế tiếp cần backfill (đầu→cuối tháng, clamp theo `floor`);
+/// `None` khi đã tới FLOOR.
+fn next_window(
+    oldest: Option<NaiveDate>,
+    today: NaiveDate,
+    floor: NaiveDate,
+) -> Option<(NaiveDate, NaiveDate)> {
+    match oldest {
+        // Chưa lấy gì: tháng hiện tại, từ đầu tháng (hoặc floor) tới hôm nay.
+        None => Some((first_of_month(today).max(floor), today)),
+        // Đã chạm FLOOR.
+        Some(o) if o <= floor => None,
+        // Lùi sang tháng trước đó.
+        Some(o) => {
+            let pm = prev_month_first(o);
+            Some((pm.max(floor), last_of_month(pm)))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn window_current_month_first_run() {
+        assert_eq!(
+            next_window(None, d("2026-07-17"), d("2026-01-01")),
+            Some((d("2026-07-01"), d("2026-07-17")))
+        );
+    }
+
+    #[test]
+    fn window_steps_back_full_calendar_months() {
+        assert_eq!(
+            next_window(Some(d("2026-07-01")), d("2026-07-17"), d("2026-01-01")),
+            Some((d("2026-06-01"), d("2026-06-30")))
+        );
+        assert_eq!(
+            next_window(Some(d("2026-06-01")), d("2026-07-17"), d("2026-01-01")),
+            Some((d("2026-05-01"), d("2026-05-31")))
+        );
+        // Tháng 3 (28 ngày, năm không nhuận 2026)
+        assert_eq!(
+            next_window(Some(d("2026-03-01")), d("2026-07-17"), d("2026-01-01")),
+            Some((d("2026-02-01"), d("2026-02-28")))
+        );
+    }
+
+    #[test]
+    fn window_stops_at_floor() {
+        assert_eq!(
+            next_window(Some(d("2026-01-01")), d("2026-07-17"), d("2026-01-01")),
+            None
+        );
+    }
+
+    #[test]
+    fn window_clamps_to_floor_mid_month() {
+        // FLOOR giữa tháng hiện tại
+        assert_eq!(
+            next_window(None, d("2026-07-17"), d("2026-07-10")),
+            Some((d("2026-07-10"), d("2026-07-17")))
+        );
+        // FLOOR giữa một tháng cũ
+        assert_eq!(
+            next_window(Some(d("2026-03-01")), d("2026-07-17"), d("2026-02-15")),
+            Some((d("2026-02-15"), d("2026-02-28")))
+        );
+    }
 }

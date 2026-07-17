@@ -5,13 +5,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use captcha_core::Solver;
 use domain::{Invoice, InvoiceFilter, SyncState};
 use tauri::{path::BaseDirectory, Manager, State};
-
+mod helper;
 mod secrets;
 mod sync;
 
 /// State sống lâu của app: client (giữ cookie), bộ giải captcha, token, DB cục bộ,
 /// và tín hiệu điều phối luồng đồng bộ nền.
-struct AppState {
+pub struct AppState {
     client: reqwest::Client,
     solver: Solver,
     token: tokio::sync::Mutex<Option<String>>,
@@ -36,6 +36,15 @@ async fn login(
         .map_err(|e| e.to_string())?;
     *state.token.lock().await = Some(token.clone());
     Ok(token)
+}
+
+/// Thông tin người nộp thuế đang đăng nhập (JSON raw từ cổng).
+#[tauri::command]
+async fn profile(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let token = helper::get_access_token(&state).await?;
+    hddt::profile(&state.client, &token)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Lưu credential vào keychain (lần đầu / đổi ở Settings) và đánh thức luồng sync.
@@ -173,6 +182,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             login,
+            profile,
             set_credentials,
             clear_credentials,
             has_credentials,

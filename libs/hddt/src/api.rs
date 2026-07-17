@@ -102,6 +102,28 @@ pub async fn query_purchase(
     })
 }
 
+/// Lấy thông tin người nộp thuế đang đăng nhập. Trả JSON raw (frontend tự dùng field cần).
+pub async fn profile(client: &Client, token: &str) -> Result<serde_json::Value, QueryError> {
+    let resp = client
+        .get(format!("{BASE}/api/security-taxpayer/profile"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| QueryError::Http(e.to_string()))?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(QueryError::Unauthorized);
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(QueryError::Http(format!("{status}: {body}")));
+    }
+    resp.json()
+        .await
+        .map_err(|e| QueryError::Parse(e.to_string()))
+}
+
 /// Map 1 record JSON hóa đơn mua vào -> [`Invoice`]. Bỏ qua record thiếu `id`.
 fn map_purchase(v: &serde_json::Value) -> Option<Invoice> {
     let id = v.get("id")?.as_str()?.to_string();

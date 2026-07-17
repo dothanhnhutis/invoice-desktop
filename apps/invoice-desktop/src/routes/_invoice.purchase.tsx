@@ -1,10 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
+import { useSync } from "@/components/sync-provider";
+import { useOnline } from "@/hooks/use-online";
 
 export const Route = createFileRoute("/_invoice/purchase")({
   component: RouteComponent,
 });
+
+const PAGE_SIZE = 50;
 
 type Invoice = {
   id: string;
@@ -25,17 +30,30 @@ type SyncState = {
 };
 
 function RouteComponent() {
+  const { progress, error } = useSync(); // tiến độ/lỗi realtime (listener toàn cục ở __root)
+  const [page, setPage] = useState(0);
+
+  const online = useOnline();
+
   const invoices = useQuery({
     queryKey: ["invoices"],
     queryFn: async () => {
-      const data = await invoke<Invoice[]>("list_invoices", {
-        filter: { limit: 50 },
-      });
+      // Lấy toàn bộ hóa đơn đã đồng bộ; phân trang hiển thị ở client.
+      const data = await invoke<Invoice[]>("list_invoices", { filter: {} });
       console.log("[list_invoices]", data.length, data);
       return data;
     },
     refetchInterval: 3000,
   });
+
+  const rows = invoices.data ?? [];
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const pageRows = rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+  // Kẹp trang khi dữ liệu co lại (vd sau prune) để không hiện trang trống.
+  useEffect(() => {
+    if (page > pageCount - 1) setPage(pageCount - 1);
+  }, [pageCount, page]);
 
   const sync = useQuery({
     queryKey: ["sync_status"],
@@ -53,6 +71,20 @@ function RouteComponent() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4">
+      {error && (
+        <div className="rounded-xl border border-red-500 bg-red-500/10 p-3 text-sm text-red-500">
+          {error}
+        </div>
+      )}
+      {progress && !error && (
+        <div className="rounded-xl border p-3 text-sm text-muted-foreground">
+          Đang đồng bộ ({progress.phase}) · lưu lượt này: {progress.saved} ·
+          tổng: {progress.total_in_db}
+        </div>
+      )}
+
+      {online && <div>online</div>}
+
       <div className="rounded-xl border p-4 text-sm">
         <p>
           Backfill xong:{" "}
@@ -64,7 +96,8 @@ function RouteComponent() {
         </p>
         <p>Đồng bộ gần nhất: {lastSync}</p>
         <p>
-          Hiển thị: <b>{invoices.data?.length ?? 0}</b> hóa đơn (tối đa 50)
+          Tổng: <b>{rows.length}</b> hóa đơn · trang{" "}
+          <b>{Math.min(page + 1, pageCount)}</b>/{pageCount}
         </p>
         {invoices.isError && (
           <p className="text-red-500">
@@ -84,7 +117,7 @@ function RouteComponent() {
             </tr>
           </thead>
           <tbody>
-            {invoices.data?.map((inv) => (
+            {pageRows.map((inv) => (
               <tr key={inv.id} className="border-b">
                 <td className="p-2">{inv.date}</td>
                 <td className="p-2">{inv.invoice_no}</td>
@@ -96,6 +129,26 @@ function RouteComponent() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex items-center justify-between text-sm">
+        <button
+          className="rounded-md border px-3 py-1 disabled:opacity-40"
+          disabled={page <= 0}
+          onClick={() => setPage((p) => Math.max(0, p - 1))}
+        >
+          ← Trước
+        </button>
+        <span className="text-muted-foreground">
+          Trang {Math.min(page + 1, pageCount)}/{pageCount}
+        </span>
+        <button
+          className="rounded-md border px-3 py-1 disabled:opacity-40"
+          disabled={page >= pageCount - 1}
+          onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+        >
+          Sau →
+        </button>
       </div>
     </div>
   );

@@ -1,4 +1,3 @@
-import * as React from "react";
 import {
   Link,
   Outlet,
@@ -7,6 +6,7 @@ import {
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import { SyncProvider } from "@/components/sync-provider";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -24,10 +24,10 @@ export const Route = createRootRouteWithContext<{
 
 function RootComponent() {
   return (
-    <React.Fragment>
+    <SyncProvider>
       <Outlet />
       <ReactQueryDevtools buttonPosition="bottom-left" />
       <TanStackRouterDevtools position="bottom-right" />
-    </React.Fragment>
+    </SyncProvider>
   );
 }

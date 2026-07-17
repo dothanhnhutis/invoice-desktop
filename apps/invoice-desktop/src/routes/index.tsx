@@ -4,8 +4,8 @@ import { Input } from "@/components/ui/input";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
+import { useSync } from "@/components/sync-provider";
 import * as z from "zod";
 
 export const Route = createFileRoute("/")({
@@ -18,19 +18,12 @@ const formSchema = z.object({
   floor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày dạng YYYY-MM-DD"),
 });
 
-/** Payload event `sync://progress` (khớp struct SyncProgress ở Rust). */
-type SyncProgress = {
-  phase: string;
-  oldest: string | null;
-  newest: string | null;
-  saved: number;
-  total_in_db: number;
-};
+export type LoginForm = z.infer<typeof formSchema>;
 
 function RouteComponent() {
   const navigate = useNavigate();
+  const { error } = useSync(); // lỗi đồng bộ toàn cục (listener ở __root)
   const [status, setStatus] = useState<string>("");
-  const [progress, setProgress] = useState<SyncProgress | null>(null);
 
   const form = useForm({
     defaultValues: {
@@ -58,22 +51,12 @@ function RouteComponent() {
   });
 
   useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-    listen<SyncProgress>("sync://progress", (e) => setProgress(e.payload)).then(
-      (u) => unlisteners.push(u),
-    );
-    listen<string>("sync://error", (e) =>
-      setStatus(`Lỗi đồng bộ: ${e.payload}`),
-    ).then((u) => unlisteners.push(u));
-
     // Prefill FLOOR đã lưu (nếu có).
     invoke<string>("get_floor")
       .then((v) => {
         if (v) form.setFieldValue("floor", v);
       })
       .catch(() => {});
-
-    return () => unlisteners.forEach((u) => u());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -172,20 +155,10 @@ function RouteComponent() {
           </FieldGroup>
         </form>
 
-        {(status || progress) && (
+        {(status || error) && (
           <div className="mt-6 rounded-md border p-3 text-sm">
             {status && <p className="font-medium">{status}</p>}
-            {progress && (
-              <div className="mt-1 text-muted-foreground">
-                <p>
-                  Pha: {progress.phase} · đã lưu lượt này: {progress.saved}
-                </p>
-                <p>
-                  Khoảng: {progress.oldest ?? "?"} → {progress.newest ?? "?"}
-                </p>
-                <p>Tổng trong máy: {progress.total_in_db}</p>
-              </div>
-            )}
+            {error && <p className="mt-1 text-red-500">{error}</p>}
           </div>
         )}
       </div>

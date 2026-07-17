@@ -13,7 +13,6 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -23,6 +22,8 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 export function NavUser({
   user,
@@ -34,7 +35,13 @@ export function NavUser({
   };
 }) {
   const { isMobile } = useSidebar();
-
+  useEffect(() => {
+    async function loadUser() {
+      const a = await invoke<string>("profile");
+      console.log("profile: ", a);
+    }
+    loadUser();
+  }, []);
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -63,7 +70,6 @@ export function NavUser({
             align="end"
             sideOffset={4}
           >
-            {" "}
             <DropdownMenuGroup>
               <DropdownMenuItem className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
