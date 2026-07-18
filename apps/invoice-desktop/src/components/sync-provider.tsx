@@ -46,7 +46,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   //     setError(null);
   //   }).then((u) => unlisteners.push(u));
   //   listen<string>("sync://error", (e) => setError(e.payload)).then((u) =>
-  //     unlisteners.push(u)
+  //     unlisteners.push(u),
   //   );
   //   return () => unlisteners.forEach((u) => u());
   // }, []);

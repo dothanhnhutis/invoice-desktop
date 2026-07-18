@@ -1,5 +1,3 @@
-import { TooltipProvider } from "./components/ui/tooltip";
-import { ThemeProvider } from "./contexts/theme-context";
 import "./index.css";
 
 import { routeTree } from "./routeTree.gen";
@@ -31,23 +29,11 @@ declare module "@tanstack/react-router" {
   }
 }
 
-function InnerApp() {
-  return (
-    <main>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </main>
-  );
-}
-
 function App() {
   return (
-    <ThemeProvider storageKey="theme">
-      <TooltipProvider>
-        <InnerApp />
-      </TooltipProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
   );
 }
 

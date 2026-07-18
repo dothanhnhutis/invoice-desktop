@@ -1,9 +1,4 @@
-import {
-  BanknoteArrowDownIcon,
-  BanknoteArrowUpIcon,
-  ChevronRight,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronRight, type LucideIcon } from "lucide-react";
 
 import {
   Collapsible,
@@ -17,8 +12,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
 import { Link } from "@tanstack/react-router";
 
@@ -77,38 +70,6 @@ export function NavMain({ items }: { items: (NavLinkType | NavLinkGroup)[] }) {
         {items.map((item) => (
           <Tree key={item.title} item={item} />
         ))}
-
-        <Collapsible render={<SidebarMenuItem />} className="group/collapsible">
-          <CollapsibleTrigger render={<SidebarMenuButton tooltip={"asssss"} />}>
-            <BanknoteArrowUpIcon />
-            <span>123</span>
-            <ChevronRight className="ml-auto transition-transform duration-200 group-data-open/collapsible:rotate-90" />
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <SidebarMenuSub className="mr-0 pr-0">
-              <SidebarMenuSubItem>
-                <SidebarMenuSubButton render={<a href={"#"} />}>
-                  <span>123</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            </SidebarMenuSub>
-          </CollapsibleContent>
-        </Collapsible>
-
-        <SidebarMenuButton
-          tooltip={"hoa don dau vao"}
-          render={<Link to="/purchase" />}
-        >
-          <BanknoteArrowUpIcon />
-          <span>Hoá đơn đầu vào</span>
-        </SidebarMenuButton>
-        <SidebarMenuButton
-          tooltip={"hoa don dau ra"}
-          render={<Link to="/purchase" />}
-        >
-          <BanknoteArrowDownIcon />
-          <span>Hoá đơn đầu ra</span>
-        </SidebarMenuButton>
       </SidebarMenu>
     </SidebarGroup>
   );

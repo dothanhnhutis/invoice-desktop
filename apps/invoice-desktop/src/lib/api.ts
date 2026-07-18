@@ -70,8 +70,8 @@ export type UserProfile = {
 };
 
 export const api = {
-  login: (username: string, password: string) =>
-    call<LoginResponse>("login", {
-      payload: { email, password, device_type: "web" },
-    }),
+  // login: (username: string, password: string) =>
+  //   call<LoginResponse>("login", {
+  //     payload: { username, password },
+  //   }),
 };

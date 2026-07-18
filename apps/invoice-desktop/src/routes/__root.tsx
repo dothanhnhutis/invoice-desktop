@@ -7,6 +7,9 @@ import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { SyncProvider } from "@/components/sync-provider";
+import { ThemeProvider } from "@/contexts/theme-context";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import OnlineFooter from "@/components/online-footer";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -24,10 +27,17 @@ export const Route = createRootRouteWithContext<{
 
 function RootComponent() {
   return (
-    <SyncProvider>
-      <Outlet />
-      <ReactQueryDevtools buttonPosition="bottom-left" />
-      <TanStackRouterDevtools position="bottom-right" />
-    </SyncProvider>
+    <main>
+      <SyncProvider>
+        <ThemeProvider storageKey="theme">
+          <TooltipProvider>
+            <Outlet />
+            <ReactQueryDevtools buttonPosition="bottom-right" />
+            <TanStackRouterDevtools position="bottom-right" />
+            <OnlineFooter />
+          </TooltipProvider>
+        </ThemeProvider>
+      </SyncProvider>
+    </main>
   );
 }

@@ -32,8 +32,7 @@ type SyncState = {
 function RouteComponent() {
   const { progress, error } = useSync(); // tiến độ/lỗi realtime (listener toàn cục ở __root)
   const [page, setPage] = useState(0);
-
-  const online = useOnline();
+  const status_net = useOnline();
 
   const invoices = useQuery({
     queryKey: ["invoices"],
@@ -82,8 +81,7 @@ function RouteComponent() {
           tổng: {progress.total_in_db}
         </div>
       )}
-
-      {online && <div>online</div>}
+      <div>{status_net}</div>
 
       <div className="rounded-xl border p-4 text-sm">
         <p>
@@ -129,26 +127,6 @@ function RouteComponent() {
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="flex items-center justify-between text-sm">
-        <button
-          className="rounded-md border px-3 py-1 disabled:opacity-40"
-          disabled={page <= 0}
-          onClick={() => setPage((p) => Math.max(0, p - 1))}
-        >
-          ← Trước
-        </button>
-        <span className="text-muted-foreground">
-          Trang {Math.min(page + 1, pageCount)}/{pageCount}
-        </span>
-        <button
-          className="rounded-md border px-3 py-1 disabled:opacity-40"
-          disabled={page >= pageCount - 1}
-          onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-        >
-          Sau →
-        </button>
       </div>
     </div>
   );

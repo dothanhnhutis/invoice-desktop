@@ -1,17 +1,8 @@
 import * as React from "react";
 import {
-  AudioWaveform,
   BanknoteArrowDownIcon,
   BanknoteArrowUpIcon,
-  BookOpen,
-  Bot,
-  Command,
-  Frame,
-  GalleryVerticalEnd,
-  Map,
-  PieChart,
-  Settings2,
-  SquareTerminal,
+  LayoutDashboardIcon,
 } from "lucide-react";
 
 import { NavLinkGroup, NavLinkType, NavMain } from "./nav-main";
@@ -26,7 +17,6 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 
-// This is sample data.
 const data = {
   user: {
     name: "shadcn",
@@ -36,14 +26,12 @@ const data = {
 };
 
 const navMain: (NavLinkType | NavLinkGroup)[] = [
-  { icon: BanknoteArrowUpIcon, title: "Tra cứu", url: "#" },
+  { icon: LayoutDashboardIcon, title: "Bảng điều khiển", url: "#" },
   {
     icon: BanknoteArrowUpIcon,
     title: "Tra cứu",
-    isActive: true,
     items: [
       {
-        isActive: true,
         title: "Tra cứu hoá đơn",
         items: [
           {

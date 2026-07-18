@@ -5,6 +5,7 @@ import {
   SidebarProvider,
   SidebarRail,
 } from "@/components/ui/sidebar";
+
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_invoice")({

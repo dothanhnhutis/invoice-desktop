@@ -177,7 +177,7 @@ pub fn run() {
                 auth_blocked: AtomicBool::new(false),
             });
             // Luồng đồng bộ nền (tự chờ tới khi có credential).
-            tauri::async_runtime::spawn(sync::run(app.handle().clone()));
+            // tauri::async_runtime::spawn(sync::run(app.handle().clone()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
