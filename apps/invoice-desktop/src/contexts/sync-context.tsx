@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -28,7 +29,11 @@ const SyncContext = createContext<SyncContextValue>({
 
 /** Đọc trạng thái đồng bộ mới nhất (progress/error) từ bất kỳ trang nào. */
 export function useSync() {
-  return useContext(SyncContext);
+  const context = useContext(SyncContext);
+  if (context === undefined)
+    throw new Error("useSync must be used within a SyncProvider");
+
+  return context;
 }
 
 /**
@@ -51,9 +56,14 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   //   return () => unlisteners.forEach((u) => u());
   // }, []);
 
+  const contextValue = useMemo<SyncContextValue>(() => {
+    return {
+      progress,
+      error,
+    };
+  }, [progress, error]);
+
   return (
-    <SyncContext.Provider value={{ progress, error }}>
-      {children}
-    </SyncContext.Provider>
+    <SyncContext.Provider value={contextValue}>{children}</SyncContext.Provider>
   );
 }

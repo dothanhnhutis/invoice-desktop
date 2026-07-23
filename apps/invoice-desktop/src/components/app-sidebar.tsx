@@ -4,7 +4,7 @@ import {
   BanknoteArrowUpIcon,
   LayoutDashboardIcon,
 } from "lucide-react";
-
+import logo2 from "@/assets/logo2.png";
 import { NavLinkGroup, NavLinkType, NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
 import {
@@ -38,12 +38,12 @@ const navMain: (NavLinkType | NavLinkGroup)[] = [
             isActive: true,
             icon: BanknoteArrowUpIcon,
             title: "Đầu ra",
-            url: "/sold",
+            url: "/lookups/invoice/sold",
           },
           {
             icon: BanknoteArrowDownIcon,
             title: "Đầu vào",
-            url: "/purchase",
+            url: "/lookups/invoice/purchase",
           },
         ],
       },
@@ -56,14 +56,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     <Sidebar {...props}>
       <SidebarHeader>
         <SidebarMenu>
-          <SidebarMenuItem>logo</SidebarMenuItem>
+          <SidebarMenuItem>
+            <img src={logo2} alt="logo2" />
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={navMain} />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

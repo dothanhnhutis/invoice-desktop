@@ -22,26 +22,13 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
-export function NavUser({
-  user,
-}: {
-  user: {
-    name: string;
-    email: string;
-    avatar: string;
-  };
-}) {
+import logo from "@/assets/logo.png";
+import { useAuth } from "@/contexts/auth-context";
+export function NavUser() {
   const { isMobile } = useSidebar();
-  useEffect(() => {
-    async function loadUser() {
-      const a = await invoke<string>("profile");
-      console.log("profile: ", a);
-    }
-    loadUser();
-  }, []);
+
+  const auth = useAuth();
+
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -55,12 +42,16 @@ export function NavUser({
             }
           >
             <Avatar className="h-8 w-8 rounded-lg">
-              <AvatarImage src={user.avatar} alt={user.name} />
+              <AvatarImage src={logo} alt={auth?.profile.username ?? ""} />
               <AvatarFallback className="rounded-lg">CN</AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-medium">{user.name}</span>
-              <span className="truncate text-xs">{user.email}</span>
+              <span className="truncate font-medium">
+                {auth?.profile.name ?? ""}
+              </span>
+              <span className="truncate text-xs">
+                {auth?.profile.username ?? ""}
+              </span>
             </div>
             <ChevronsUpDown className="ml-auto size-4" />
           </DropdownMenuTrigger>
@@ -74,12 +65,19 @@ export function NavUser({
               <DropdownMenuItem className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                   <Avatar className="h-8 w-8 rounded-lg">
-                    <AvatarImage src={user.avatar} alt={user.name} />
+                    <AvatarImage
+                      src={logo}
+                      alt={auth?.profile.username ?? ""}
+                    />
                     <AvatarFallback className="rounded-lg">CN</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">{user.name}</span>
-                    <span className="truncate text-xs">{user.email}</span>
+                    <span className="truncate font-medium">
+                      {auth?.profile.name ?? ""}
+                    </span>
+                    <span className="truncate text-xs">
+                      {auth?.profile.username ?? ""}
+                    </span>
                   </div>
                 </div>
               </DropdownMenuItem>

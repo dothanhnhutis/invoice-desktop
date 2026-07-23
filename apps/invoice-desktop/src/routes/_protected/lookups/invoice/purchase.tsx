@@ -2,10 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-import { useSync } from "@/components/sync-provider";
+import { useSync } from "@/contexts/sync-context";
 import { useOnline } from "@/hooks/use-online";
 
-export const Route = createFileRoute("/_invoice/purchase")({
+export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
   component: RouteComponent,
 });
 

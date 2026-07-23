@@ -1,167 +1,110 @@
-import { Button } from "@/components/ui/button";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useForm } from "@tanstack/react-form";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
-import { useSync } from "@/components/sync-provider";
-import * as z from "zod";
+import logo2 from "@/assets/logo2.png";
+
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+} from "@/components/ui/sidebar";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+} from "@/components/ui/breadcrumb";
+
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import LoginDialog from "@/components/login-dialog";
 
 export const Route = createFileRoute("/")({
+  // Đã có credential -> vào thẳng app, khỏi qua màn đăng nhập.
+  beforeLoad: async () => {
+    const ok = await invoke<boolean>("has_credentials");
+    if (!ok) {
+      await invoke<boolean>("clear_credentials");
+    } else throw redirect({ to: "/lookups/invoice/purchase" });
+  },
   component: RouteComponent,
 });
-
-const formSchema = z.object({
-  username: z.string().min(1, "Bắt buộc"),
-  password: z.string().min(1, "Bắt buộc"),
-  floor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày dạng YYYY-MM-DD"),
-});
-
-export type LoginForm = z.infer<typeof formSchema>;
-
 function RouteComponent() {
-  const navigate = useNavigate();
-  const { error } = useSync(); // lỗi đồng bộ toàn cục (listener ở __root)
-  const [status, setStatus] = useState<string>("");
-
-  const form = useForm({
-    defaultValues: {
-      username: "",
-      password: "",
-      floor: "2026-07-01",
-    },
-    validators: {
-      onSubmit: formSchema,
-    },
-    onSubmit: async ({ value }) => {
-      try {
-        // Đặt FLOOR trước để backfill chạy đúng mốc, rồi lưu credential (kích sync).
-        await invoke("set_floor", { date: value.floor });
-        await invoke("set_credentials", {
-          username: value.username,
-          password: value.password,
-        });
-        setStatus("Đã lưu. Đang đồng bộ…");
-        navigate({ to: "/purchase" });
-      } catch (e) {
-        setStatus(`Lỗi: ${e}`);
-      }
-    },
-  });
-
-  useEffect(() => {
-    // Prefill FLOOR đã lưu (nếu có).
-    invoke<string>("get_floor")
-      .then((v) => {
-        if (v) form.setFieldValue("floor", v);
-      })
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
-    <div className="flex flex-1 items-center justify-center h-screen">
-      <div className="w-full max-w-xs">
-        <form
-          className={"flex flex-col gap-6"}
-          onSubmit={(e) => {
-            e.preventDefault();
-            form.handleSubmit();
-          }}
-        >
-          <FieldGroup>
-            <div className="flex flex-col items-center gap-1 text-center">
-              <h1 className="text-2xl font-bold">Cài đặt Credential</h1>
-            </div>
-            <form.Field
-              name="username"
-              children={(field) => {
-                return (
-                  <Field>
-                    <FieldLabel htmlFor={field.name}>Mã số thuế</FieldLabel>
-                    <Input
-                      id={field.name}
-                      name={field.name}
-                      value={field.state.value}
-                      onBlur={field.handleBlur}
-                      onChange={(e) => field.handleChange(e.target.value)}
-                      type="text"
-                      placeholder="0123456789"
-                      required
-                    />
-                  </Field>
-                );
-              }}
+    <SidebarProvider>
+      <Sidebar>
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <img src={logo2} alt="logo2" />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              <Skeleton className="h-3 w-20" />
+            </SidebarGroupLabel>
+            <SidebarMenu>
+              <SidebarMenuButton>
+                <Skeleton className="h-8 w-full" />
+              </SidebarMenuButton>
+              <SidebarMenuButton>
+                <Skeleton className="h-8 w-full" />
+              </SidebarMenuButton>
+              <SidebarMenuButton>
+                <Skeleton className="h-8 w-full" />
+              </SidebarMenuButton>
+            </SidebarMenu>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <Skeleton className="h-12 w-full" />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      </Sidebar>
+      <SidebarInset>
+        <header className="sticky top-0 z-50 backdrop-blur-lg flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+          <div className="flex items-center gap-2 px-4">
+            <Skeleton className="size-7" />
+            <Separator
+              orientation="vertical"
+              className="mr-2 data-[orientation=vertical]:h-7"
             />
-
-            <form.Field
-              name="password"
-              children={(field) => {
-                return (
-                  <Field>
-                    <div className="flex items-center">
-                      <FieldLabel htmlFor={field.name}>Mật khẩu</FieldLabel>
-                    </div>
-                    <Input
-                      id={field.name}
-                      name={field.name}
-                      value={field.state.value}
-                      onBlur={field.handleBlur}
-                      onChange={(e) => field.handleChange(e.target.value)}
-                      type="password"
-                      required
-                      placeholder="********"
-                    />
-                  </Field>
-                );
-              }}
-            />
-
-            <form.Field
-              name="floor"
-              children={(field) => {
-                return (
-                  <Field>
-                    <div className="flex items-center">
-                      <FieldLabel htmlFor={field.name}>
-                        Ngày đăng ký công ty
-                      </FieldLabel>
-                    </div>
-                    <Input
-                      id={field.name}
-                      name={field.name}
-                      value={field.state.value}
-                      onBlur={field.handleBlur}
-                      onChange={(e) => field.handleChange(e.target.value)}
-                      type="date"
-                      required
-                    />
-                  </Field>
-                );
-              }}
-            />
-
-            <form.Subscribe
-              selector={(state) => [state.canSubmit, state.isSubmitting]}
-              children={([canSubmit, isSubmitting]) => (
-                <Field>
-                  <Button type="submit" disabled={!canSubmit}>
-                    {isSubmitting ? "..." : "Lưu & Đồng bộ"}
-                  </Button>
-                </Field>
-              )}
-            />
-          </FieldGroup>
-        </form>
-
-        {(status || error) && (
-          <div className="mt-6 rounded-md border p-3 text-sm">
-            {status && <p className="font-medium">{status}</p>}
-            {error && <p className="mt-1 text-red-500">{error}</p>}
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem className="hidden md:block">
+                  <Skeleton className="h-4 w-40" />
+                </BreadcrumbItem>
+                <BreadcrumbItem>
+                  <Skeleton className="h-4 w-40" />
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
           </div>
-        )}
-      </div>
-    </div>
+          <div className="ml-auto px-4">
+            <Skeleton className="size-10" />
+          </div>
+        </header>
+        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+          <div className="grid auto-rows-min gap-4 md:grid-cols-3">
+            <div className="aspect-video rounded-xl bg-muted/50" />
+            <div className="aspect-video rounded-xl bg-muted/50" />
+            <div className="aspect-video rounded-xl bg-muted/50" />
+          </div>
+          <div className="min-h-screen flex-1 rounded-xl bg-muted/50 md:min-h-min" />
+        </div>
+        <LoginDialog />
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

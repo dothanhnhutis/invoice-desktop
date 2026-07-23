@@ -9,12 +9,13 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as InvoiceRouteImport } from './routes/_invoice'
+import { Route as ProtectedRouteRouteImport } from './routes/_protected/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as InvoicePurchaseRouteImport } from './routes/_invoice.purchase'
+import { Route as ProtectedLookupsInvoiceSoldRouteImport } from './routes/_protected/lookups/invoice/sold'
+import { Route as ProtectedLookupsInvoicePurchaseRouteImport } from './routes/_protected/lookups/invoice/purchase'
 
-const InvoiceRoute = InvoiceRouteImport.update({
-  id: '/_invoice',
+const ProtectedRouteRoute = ProtectedRouteRouteImport.update({
+  id: '/_protected',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -22,46 +23,61 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const InvoicePurchaseRoute = InvoicePurchaseRouteImport.update({
-  id: '/purchase',
-  path: '/purchase',
-  getParentRoute: () => InvoiceRoute,
-} as any)
+const ProtectedLookupsInvoiceSoldRoute =
+  ProtectedLookupsInvoiceSoldRouteImport.update({
+    id: '/lookups/invoice/sold',
+    path: '/lookups/invoice/sold',
+    getParentRoute: () => ProtectedRouteRoute,
+  } as any)
+const ProtectedLookupsInvoicePurchaseRoute =
+  ProtectedLookupsInvoicePurchaseRouteImport.update({
+    id: '/lookups/invoice/purchase',
+    path: '/lookups/invoice/purchase',
+    getParentRoute: () => ProtectedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/purchase': typeof InvoicePurchaseRoute
+  '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
+  '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/purchase': typeof InvoicePurchaseRoute
+  '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
+  '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/_invoice': typeof InvoiceRouteWithChildren
-  '/_invoice/purchase': typeof InvoicePurchaseRoute
+  '/_protected': typeof ProtectedRouteRouteWithChildren
+  '/_protected/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
+  '/_protected/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/purchase'
+  fullPaths: '/' | '/lookups/invoice/purchase' | '/lookups/invoice/sold'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/purchase'
-  id: '__root__' | '/' | '/_invoice' | '/_invoice/purchase'
+  to: '/' | '/lookups/invoice/purchase' | '/lookups/invoice/sold'
+  id:
+    | '__root__'
+    | '/'
+    | '/_protected'
+    | '/_protected/lookups/invoice/purchase'
+    | '/_protected/lookups/invoice/sold'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  InvoiceRoute: typeof InvoiceRouteWithChildren
+  ProtectedRouteRoute: typeof ProtectedRouteRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/_invoice': {
-      id: '/_invoice'
+    '/_protected': {
+      id: '/_protected'
       path: ''
       fullPath: '/'
-      preLoaderRoute: typeof InvoiceRouteImport
+      preLoaderRoute: typeof ProtectedRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -71,30 +87,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_invoice/purchase': {
-      id: '/_invoice/purchase'
-      path: '/purchase'
-      fullPath: '/purchase'
-      preLoaderRoute: typeof InvoicePurchaseRouteImport
-      parentRoute: typeof InvoiceRoute
+    '/_protected/lookups/invoice/sold': {
+      id: '/_protected/lookups/invoice/sold'
+      path: '/lookups/invoice/sold'
+      fullPath: '/lookups/invoice/sold'
+      preLoaderRoute: typeof ProtectedLookupsInvoiceSoldRouteImport
+      parentRoute: typeof ProtectedRouteRoute
+    }
+    '/_protected/lookups/invoice/purchase': {
+      id: '/_protected/lookups/invoice/purchase'
+      path: '/lookups/invoice/purchase'
+      fullPath: '/lookups/invoice/purchase'
+      preLoaderRoute: typeof ProtectedLookupsInvoicePurchaseRouteImport
+      parentRoute: typeof ProtectedRouteRoute
     }
   }
 }
 
-interface InvoiceRouteChildren {
-  InvoicePurchaseRoute: typeof InvoicePurchaseRoute
+interface ProtectedRouteRouteChildren {
+  ProtectedLookupsInvoicePurchaseRoute: typeof ProtectedLookupsInvoicePurchaseRoute
+  ProtectedLookupsInvoiceSoldRoute: typeof ProtectedLookupsInvoiceSoldRoute
 }
 
-const InvoiceRouteChildren: InvoiceRouteChildren = {
-  InvoicePurchaseRoute: InvoicePurchaseRoute,
+const ProtectedRouteRouteChildren: ProtectedRouteRouteChildren = {
+  ProtectedLookupsInvoicePurchaseRoute: ProtectedLookupsInvoicePurchaseRoute,
+  ProtectedLookupsInvoiceSoldRoute: ProtectedLookupsInvoiceSoldRoute,
 }
 
-const InvoiceRouteWithChildren =
-  InvoiceRoute._addFileChildren(InvoiceRouteChildren)
+const ProtectedRouteRouteWithChildren = ProtectedRouteRoute._addFileChildren(
+  ProtectedRouteRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  InvoiceRoute: InvoiceRouteWithChildren,
+  ProtectedRouteRoute: ProtectedRouteRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
