@@ -12,7 +12,6 @@ import { useEffect, useState } from "react";
 import * as z from "zod";
 import { useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
-import { useSync } from "../contexts/sync-context";
 import { invoke } from "@tauri-apps/api/core";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "./ui/input";
@@ -27,30 +26,36 @@ export type LoginForm = z.infer<typeof formSchema>;
 
 const LoginDialog = () => {
   const navigate = useNavigate();
-  const { error } = useSync(); // lỗi đồng bộ toàn cục (listener ở __root)
-  const [status, setStatus] = useState<string>("");
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   const form = useForm({
     defaultValues: {
       username: "",
       password: "",
-      floor: "2026-07-01",
+      floor: "",
     },
     validators: {
       onSubmit: formSchema,
     },
     onSubmit: async ({ value }) => {
+      setLoginError(null); // xóa lỗi cũ trước mỗi lần thử
       try {
-        // Đặt FLOOR trước để backfill chạy đúng mốc, rồi lưu credential (kích sync).
+        // 1) Đăng nhập (giải captcha ở backend). Sai mật khẩu -> throw, DỪNG tại đây.
+        await invoke<string>("login", {
+          username: value.username,
+          password: value.password,
+        });
+        // 2) Chỉ khi login OK mới đặt FLOOR rồi lưu credential (set_credentials kích sync).
         await invoke("set_floor", { date: value.floor });
         await invoke("set_credentials", {
           username: value.username,
           password: value.password,
         });
-        setStatus("Đã lưu. Đang đồng bộ…");
+        // 3) Vào app; guard _protected pass vì has_credentials giờ = true.
         navigate({ to: "/lookups/invoice/purchase" });
       } catch (e) {
-        setStatus(`Lỗi: ${e}`);
+        // invoke reject bằng String (Err của Result<_, String> ở Rust).
+        setLoginError(typeof e === "string" ? e : String(e));
       }
     },
   });
@@ -79,10 +84,10 @@ const LoginDialog = () => {
         }
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>Cài đặt Credential</AlertDialogTitle>
+          <AlertDialogTitle>Cài đặt tài khoản</AlertDialogTitle>
           <AlertDialogDescription>
-            This action cannot be undone. This will permanently delete your
-            account and remove your data from our servers.
+            Nhập các thông tin bên dưới để đồng bộ dữ liệu từ thuế
+            https://hoadondientu.gdt.gov.vn
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -171,10 +176,9 @@ const LoginDialog = () => {
           />
         </FieldGroup>
 
-        {(status || error) && (
-          <div className="mt-6 rounded-md border p-3 text-sm">
-            {status && <p className="font-medium">{status}</p>}
-            {error && <p className="mt-1 text-red-500">{error}</p>}
+        {loginError && (
+          <div className="mt-6 rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-500">
+            {loginError}
           </div>
         )}
       </AlertDialogContent>

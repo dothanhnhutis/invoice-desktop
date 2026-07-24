@@ -153,10 +153,10 @@ async fn fetch_window(
                 }
                 tokio::time::sleep(THROTTLE).await;
             }
-            // Token hết hạn giữa chừng: thử re-login đúng 1 lần rồi tiếp.
+            // Token hết hạn giữa chừng: xóa token (RAM + keychain) rồi re-login 1 lần.
             Err(hddt::QueryError::Unauthorized) if !retried_auth => {
                 retried_auth = true;
-                *state.token.lock().await = None;
+                crate::helper::invalidate_token(state).await;
             }
             Err(hddt::QueryError::Unauthorized) => return Err(SyncError::Auth),
             Err(e) => return Err(SyncError::Other(e.to_string())),
@@ -167,11 +167,8 @@ async fn fetch_window(
 
 /// Lấy token cache; thiếu -> login (creds từ keychain). Sai mật khẩu/bị khóa -> `Auth`.
 async fn ensure_token(state: &AppState) -> Result<String, SyncError> {
-    {
-        let guard = state.token.lock().await;
-        if let Some(t) = guard.as_ref() {
-            return Ok(t.clone());
-        }
+    if let Some(t) = crate::helper::valid_cached_token(state).await {
+        return Ok(t);
     }
     let (user, pass) = secrets::load().ok_or(SyncError::Auth)?;
     let token = hddt::login(&state.client, &state.solver, &user, &pass, 8, 0.06)
@@ -180,6 +177,7 @@ async fn ensure_token(state: &AppState) -> Result<String, SyncError> {
             hddt::LoginError::BadCredentials(_) | hddt::LoginError::Locked(_) => SyncError::Auth,
             e => SyncError::Other(e.to_string()),
         })?;
+    let _ = secrets::save_token(&token); // bền vững qua lần mở app sau
     *state.token.lock().await = Some(token.clone());
     Ok(token)
 }

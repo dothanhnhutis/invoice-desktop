@@ -17,6 +17,7 @@ roxmltree = "0.21.1"                                             # parse SVG (nh
 # hoặc xmltree = "0.10"     # nếu cần mutate
 rusqlite = { version = "0.32", features = ["bundled"] }         # SQLite bundled (không cần cài hệ thống)
 keyring = { version = "3", features = ["windows-native"] }      # lưu credential ở OS keychain
+base64 = "0.22"                                                 # giải mã payload JWT (đọc claim exp)
 
 
 [profile.release]

@@ -11,8 +11,6 @@ import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 
 export const Route = createFileRoute("/_protected")({
-  // Guard xác thực: chạy TRƯỚC khi render mọi trang con của _protected.
-  // Chưa lưu credential (keychain trống) -> đá về "/" (màn đăng nhập).
   beforeLoad: async () => {
     const ok = await invoke<boolean>("has_credentials");
     if (!ok) {
@@ -21,7 +19,6 @@ export const Route = createFileRoute("/_protected")({
     }
   },
 
-  // 2. loader nhận được currentUser từ context của beforeLoad
   loader: async () => {
     const profile = await invoke<Profile | null>("profile");
     if (!profile) {
@@ -30,18 +27,11 @@ export const Route = createFileRoute("/_protected")({
     }
     return { profile };
   },
-
-  //   // 3. Component nhận data từ loader
-  //   component: () => {
-  //     const { stats, user } = Route.useLoaderData();
-  //     return <div>Xin chào {user.name}</div>;
-  //   },
   component: ProtectedLayout,
 });
 
 function ProtectedLayout() {
   const { profile } = Route.useLoaderData();
-  console.log("12", profile);
   return (
     <SyncProvider>
       <AuthProvider profile={profile}>

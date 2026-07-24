@@ -67,11 +67,9 @@ pub async fn query_purchase(
         params.push(("state", s.to_string()));
     }
 
-    let url = reqwest::Url::parse_with_params(
-        &format!("{BASE}/api/query/invoices/purchase"),
-        &params,
-    )
-    .map_err(|e| QueryError::Http(e.to_string()))?;
+    let url =
+        reqwest::Url::parse_with_params(&format!("{BASE}/api/query/invoices/purchase"), &params)
+            .map_err(|e| QueryError::Http(e.to_string()))?;
 
     let resp = client
         .get(url)
@@ -127,22 +125,32 @@ pub async fn profile(client: &Client, token: &str) -> Result<serde_json::Value, 
 /// Map 1 record JSON hóa đơn mua vào -> [`Invoice`]. Bỏ qua record thiếu `id`.
 fn map_purchase(v: &serde_json::Value) -> Option<Invoice> {
     let id = v.get("id")?.as_str()?.to_string();
-    let str_field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-
-    let khhdon = str_field("khhdon");
-    let shdon = v
-        .get("shdon")
-        .map(|x| x.as_i64().map(|n| n.to_string()).unwrap_or_else(|| str_field("shdon")))
-        .unwrap_or_default();
+    // Trích field theo kiểu, mặc định an toàn khi thiếu/sai kiểu.
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let u = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
 
     Some(Invoice {
         id,
         kind: InvoiceKind::Purchase,
-        seller_tax: str_field("nbmst"),
-        buyer_tax: str_field("nmmst"),
-        invoice_no: format!("{khhdon}-{shdon}"),
-        date: str_field("tdlap"),
-        total: v.get("tgtttbso").and_then(|x| x.as_f64()).unwrap_or(0.0).round() as i64,
+        nbmst: s("nbmst"),
+        khmshdon: u("khmshdon") as u8,
+        khhdon: s("khhdon"),
+        shdon: u("shdon") as u32,
+        dvtte: s("dvtte"),
+        nbdchi: s("nbdchi"),
+        nbten: s("nbten"),
+        tgtcthue: f("tgtcthue"),
+        tgtthue: f("tgtthue"),
+        tgtttbso: f("tgtttbso"),
+        tlhdon: s("tlhdon"),
+        ttcktmai: f("ttcktmai"),
+        tthai: u("tthai") as u8,
+        ttxly: u("ttxly") as u8,
+        ntao: s("ntao"),
+        nmten: s("nmten"),
+        nmmst: s("nmmst"),
+        nmdchi: s("nmdchi"),
         raw_json: v.to_string(),
     })
 }
@@ -157,18 +165,26 @@ mod tests {
             "id": "740edf6f-1445-41de-9f21-746bd419f0b6",
             "nbmst": "0109266456",
             "nmmst": "2200773307",
+            "khmshdon": 1,
             "khhdon": "C25TAC",
             "shdon": 6033492,
-            "tdlap": "2025-12-01T17:00:00Z",
-            "tgtttbso": 38500.0
+            "tgtcthue": 35000.0,
+            "tgtthue": 3500.0,
+            "tgtttbso": 38500.0,
+            "tthai": 1,
+            "ttxly": 5,
+            "ntao": "2025-12-01T17:00:00Z"
         });
         let inv = map_purchase(&v).expect("map ra Invoice");
         assert_eq!(inv.id, "740edf6f-1445-41de-9f21-746bd419f0b6");
-        assert_eq!(inv.seller_tax, "0109266456");
-        assert_eq!(inv.buyer_tax, "2200773307");
-        assert_eq!(inv.invoice_no, "C25TAC-6033492");
-        assert_eq!(inv.date, "2025-12-01T17:00:00Z");
-        assert_eq!(inv.total, 38500);
+        assert_eq!(inv.nbmst, "0109266456");
+        assert_eq!(inv.nmmst, "2200773307");
+        assert_eq!(inv.khmshdon, 1);
+        assert_eq!(inv.khhdon, "C25TAC");
+        assert_eq!(inv.shdon, 6033492);
+        assert_eq!(inv.tgtttbso, 38500.0);
+        assert_eq!(inv.ttxly, 5);
+        assert_eq!(inv.ntao, "2025-12-01T17:00:00Z");
         assert_eq!(inv.kind, InvoiceKind::Purchase);
     }
 

@@ -3,7 +3,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useSync } from "@/contexts/sync-context";
-import { useOnline } from "@/hooks/use-online";
 
 export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
   component: RouteComponent,
@@ -11,14 +10,28 @@ export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
 
 const PAGE_SIZE = 50;
 
+// Khớp domain::Invoice (field thô GDT).
 type Invoice = {
   id: string;
   kind: string;
-  seller_tax: string;
-  buyer_tax: string;
-  invoice_no: string;
-  date: string;
-  total: number;
+  nbmst: string;
+  khmshdon: number;
+  khhdon: string;
+  shdon: number;
+  dvtte: string;
+  nbdchi: string;
+  nbten: string;
+  tgtcthue: number;
+  tgtthue: number;
+  tgtttbso: number;
+  tlhdon: string;
+  ttcktmai: number;
+  tthai: number;
+  ttxly: number;
+  ntao: string;
+  nmten: string;
+  nmmst: string;
+  nmdchi: string;
   raw_json: string;
 };
 
@@ -32,16 +45,20 @@ type SyncState = {
 function RouteComponent() {
   const { progress, error } = useSync(); // tiến độ/lỗi realtime (listener toàn cục ở __root)
   const [page, setPage] = useState(0);
-  const status_net = useOnline();
 
   const invoices = useQuery({
     queryKey: ["invoices"],
     queryFn: async () => {
       // Lấy toàn bộ hóa đơn đã đồng bộ; phân trang hiển thị ở client.
       const data = await invoke<Invoice[]>("list_invoices", { filter: {} });
-      console.log("[list_invoices]", data.length, data);
       return data;
     },
+    refetchInterval: 3000,
+  });
+
+  const sync = useQuery({
+    queryKey: ["sync_status"],
+    queryFn: async () => invoke<SyncState>("get_sync_status"),
     refetchInterval: 3000,
   });
 
@@ -53,16 +70,6 @@ function RouteComponent() {
   useEffect(() => {
     if (page > pageCount - 1) setPage(pageCount - 1);
   }, [pageCount, page]);
-
-  const sync = useQuery({
-    queryKey: ["sync_status"],
-    queryFn: async () => {
-      const s = await invoke<SyncState>("get_sync_status");
-      console.log("[get_sync_status]", s);
-      return s;
-    },
-    refetchInterval: 3000,
-  });
 
   const lastSync = sync.data?.last_sync_at
     ? new Date(sync.data.last_sync_at * 1000).toLocaleString()
@@ -81,7 +88,6 @@ function RouteComponent() {
           tổng: {progress.total_in_db}
         </div>
       )}
-      <div>{status_net}</div>
 
       <div className="rounded-xl border p-4 text-sm">
         <p>
@@ -108,25 +114,49 @@ function RouteComponent() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left">
-              <th className="p-2">Ngày</th>
+              <th className="p-2">Ngày tạo</th>
               <th className="p-2">Số HĐ</th>
               <th className="p-2">MST người bán</th>
+              <th className="p-2">Tên người bán</th>
               <th className="p-2 text-right">Tổng tiền</th>
             </tr>
           </thead>
           <tbody>
             {pageRows.map((inv) => (
               <tr key={inv.id} className="border-b">
-                <td className="p-2">{inv.date}</td>
-                <td className="p-2">{inv.invoice_no}</td>
-                <td className="p-2">{inv.seller_tax}</td>
+                <td className="p-2">{inv.ntao}</td>
+                <td className="p-2">
+                  {inv.khhdon}-{inv.shdon}
+                </td>
+                <td className="p-2">{inv.nbmst}</td>
+                <td className="p-2">{inv.nbten}</td>
                 <td className="p-2 text-right">
-                  {inv.total.toLocaleString("vi-VN")}
+                  {inv.tgtttbso.toLocaleString("vi-VN")}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex items-center justify-between text-sm">
+        <button
+          className="rounded-md border px-3 py-1 disabled:opacity-40"
+          disabled={page <= 0}
+          onClick={() => setPage((p) => Math.max(0, p - 1))}
+        >
+          ← Trước
+        </button>
+        <span className="text-muted-foreground">
+          Trang {Math.min(page + 1, pageCount)}/{pageCount}
+        </span>
+        <button
+          className="rounded-md border px-3 py-1 disabled:opacity-40"
+          disabled={page >= pageCount - 1}
+          onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+        >
+          Sau →
+        </button>
       </div>
     </div>
   );

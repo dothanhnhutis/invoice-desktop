@@ -1950,6 +1950,7 @@ dependencies = [
 name = "hddt"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "captcha-core",
  "domain",
  "reqwest",

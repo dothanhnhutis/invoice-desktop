@@ -28,22 +28,54 @@ impl InvoiceKind {
     }
 }
 
-/// Một hóa đơn đã chuẩn hóa để lưu/truy vấn cục bộ.
+/// Một hóa đơn (giữ nguyên tên field thô của cổng GDT).
 ///
 /// `raw_json` giữ nguyên payload gốc từ API để không mất dữ liệu khi các field
-/// chuẩn hóa (dưới đây) chưa bao phủ hết. Ngày để dạng chuỗi ISO/`dd/MM/yyyy`
-/// đúng như API trả (tránh phụ thuộc lib thời gian ở tầng domain).
+/// dưới đây chưa bao phủ hết. Mốc thời gian (`ntao`) để dạng chuỗi ISO đúng như
+/// API trả (tránh phụ thuộc lib thời gian ở tầng domain; ISO so sánh chuỗi vẫn
+/// đúng thứ tự thời gian).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Invoice {
     /// Khóa chính duy nhất (định danh hóa đơn từ cổng).
     pub id: String,
+    /// Loại hóa đơn (mua/bán) — suy ra từ endpoint, không có trong payload.
     pub kind: InvoiceKind,
-    pub seller_tax: String,
-    pub buyer_tax: String,
-    pub invoice_no: String,
-    /// Ngày lập (chuỗi như API trả).
-    pub date: String,
-    pub total: i64,
+    /// MST bên bán.
+    pub nbmst: String,
+    /// Ký hiệu mẫu số hóa đơn.
+    pub khmshdon: u8,
+    /// Ký hiệu hóa đơn.
+    pub khhdon: String,
+    /// Số hóa đơn.
+    pub shdon: u32,
+    /// Đơn vị tiền tệ.
+    pub dvtte: String,
+    /// Địa chỉ bên bán.
+    pub nbdchi: String,
+    /// Tên bên bán.
+    pub nbten: String,
+    /// Tổng tiền chưa thuế.
+    pub tgtcthue: f64,
+    /// Tổng tiền thuế.
+    pub tgtthue: f64,
+    /// Tổng tiền thanh toán (bằng số).
+    pub tgtttbso: f64,
+    /// Thể loại hóa đơn.
+    pub tlhdon: String,
+    /// Tổng tiền chiết khấu thương mại.
+    pub ttcktmai: f64,
+    /// Trạng thái.
+    pub tthai: u8,
+    /// Thông tin xử lý.
+    pub ttxly: u8,
+    /// Ngày tạo (chuỗi ISO như API trả) — dùng làm mốc sắp xếp/lọc/prune.
+    pub ntao: String,
+    /// Tên bên mua.
+    pub nmten: String,
+    /// MST bên mua.
+    pub nmmst: String,
+    /// Địa chỉ bên mua.
+    pub nmdchi: String,
     /// Payload gốc (JSON) từ API.
     pub raw_json: String,
 }

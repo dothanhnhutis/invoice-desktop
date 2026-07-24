@@ -8,7 +8,7 @@ pub mod auth;
 pub mod client;
 
 pub use api::{Page, QueryError, profile, query_purchase};
-pub use auth::{LoginError, login};
+pub use auth::{AuthErr, LoginError, is_expired, login, token_expiry};
 pub use client::make_client;
 
 /// Base URL của cổng hóa đơn điện tử.

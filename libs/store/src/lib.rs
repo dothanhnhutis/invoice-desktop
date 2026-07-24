@@ -20,14 +20,27 @@ const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS invoices (
     id          TEXT PRIMARY KEY,
     kind        TEXT NOT NULL,
-    seller_tax  TEXT NOT NULL,
-    buyer_tax   TEXT NOT NULL,
-    invoice_no  TEXT NOT NULL,
-    date        TEXT NOT NULL,
-    total       INTEGER NOT NULL,
+    nbmst       TEXT NOT NULL,
+    khmshdon    INTEGER NOT NULL,
+    khhdon      TEXT NOT NULL,
+    shdon       INTEGER NOT NULL,
+    dvtte       TEXT NOT NULL,
+    nbdchi      TEXT NOT NULL,
+    nbten       TEXT NOT NULL,
+    tgtcthue    REAL NOT NULL,
+    tgtthue     REAL NOT NULL,
+    tgtttbso    REAL NOT NULL,
+    tlhdon      TEXT NOT NULL,
+    ttcktmai    REAL NOT NULL,
+    tthai       INTEGER NOT NULL,
+    ttxly       INTEGER NOT NULL,
+    ntao        TEXT NOT NULL,
+    nmten       TEXT NOT NULL,
+    nmmst       TEXT NOT NULL,
+    nmdchi      TEXT NOT NULL,
     raw_json    TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(date);
+CREATE INDEX IF NOT EXISTS idx_invoices_ntao ON invoices(ntao);
 CREATE INDEX IF NOT EXISTS idx_invoices_kind ON invoices(kind);
 
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -72,22 +85,42 @@ impl Db {
         {
             let mut stmt = tx.prepare(
                 r#"INSERT INTO invoices
-                     (id, kind, seller_tax, buyer_tax, invoice_no, date, total, raw_json)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                     (id, kind, nbmst, khmshdon, khhdon, shdon, dvtte, nbdchi, nbten,
+                      tgtcthue, tgtthue, tgtttbso, tlhdon, ttcktmai, tthai, ttxly,
+                      ntao, nmten, nmmst, nmdchi, raw_json)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                           ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
                    ON CONFLICT(id) DO UPDATE SET
-                     kind=excluded.kind, seller_tax=excluded.seller_tax,
-                     buyer_tax=excluded.buyer_tax, invoice_no=excluded.invoice_no,
-                     date=excluded.date, total=excluded.total, raw_json=excluded.raw_json"#,
+                     kind=excluded.kind, nbmst=excluded.nbmst, khmshdon=excluded.khmshdon,
+                     khhdon=excluded.khhdon, shdon=excluded.shdon, dvtte=excluded.dvtte,
+                     nbdchi=excluded.nbdchi, nbten=excluded.nbten, tgtcthue=excluded.tgtcthue,
+                     tgtthue=excluded.tgtthue, tgtttbso=excluded.tgtttbso, tlhdon=excluded.tlhdon,
+                     ttcktmai=excluded.ttcktmai, tthai=excluded.tthai, ttxly=excluded.ttxly,
+                     ntao=excluded.ntao, nmten=excluded.nmten, nmmst=excluded.nmmst,
+                     nmdchi=excluded.nmdchi, raw_json=excluded.raw_json"#,
             )?;
             for inv in invoices {
                 stmt.execute(params![
                     inv.id,
                     inv.kind.as_str(),
-                    inv.seller_tax,
-                    inv.buyer_tax,
-                    inv.invoice_no,
-                    inv.date,
-                    inv.total,
+                    inv.nbmst,
+                    inv.khmshdon,
+                    inv.khhdon,
+                    inv.shdon,
+                    inv.dvtte,
+                    inv.nbdchi,
+                    inv.nbten,
+                    inv.tgtcthue,
+                    inv.tgtthue,
+                    inv.tgtttbso,
+                    inv.tlhdon,
+                    inv.ttcktmai,
+                    inv.tthai,
+                    inv.ttxly,
+                    inv.ntao,
+                    inv.nmten,
+                    inv.nmmst,
+                    inv.nmdchi,
                     inv.raw_json,
                 ])?;
             }
@@ -98,7 +131,9 @@ impl Db {
     /// Truy vấn hóa đơn theo bộ lọc (sắp xếp ngày giảm dần).
     pub fn query(&self, filter: &InvoiceFilter) -> Result<Vec<Invoice>> {
         let mut sql = String::from(
-            "SELECT id, kind, seller_tax, buyer_tax, invoice_no, date, total, raw_json \
+            "SELECT id, kind, nbmst, khmshdon, khhdon, shdon, dvtte, nbdchi, nbten, \
+             tgtcthue, tgtthue, tgtttbso, tlhdon, ttcktmai, tthai, ttxly, ntao, \
+             nmten, nmmst, nmdchi, raw_json \
              FROM invoices WHERE 1=1",
         );
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -108,14 +143,14 @@ impl Db {
             args.push(Box::new(kind.as_str().to_string()));
         }
         if let Some(from) = &filter.from {
-            sql.push_str(" AND date >= ?");
+            sql.push_str(" AND ntao >= ?");
             args.push(Box::new(from.clone()));
         }
         if let Some(to) = &filter.to {
-            sql.push_str(" AND date <= ?");
+            sql.push_str(" AND ntao <= ?");
             args.push(Box::new(to.clone()));
         }
-        sql.push_str(" ORDER BY date DESC");
+        sql.push_str(" ORDER BY ntao DESC");
         if let Some(limit) = filter.limit {
             sql.push_str(" LIMIT ?");
             args.push(Box::new(limit as i64));
@@ -172,7 +207,19 @@ impl Db {
     /// Dùng khi nâng FLOOR muộn hơn (thu hẹp lịch sử).
     pub fn delete_invoices_before(&self, date: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM invoices WHERE date < ?1", params![date])
+        conn.execute("DELETE FROM invoices WHERE ntao < ?1", params![date])
+    }
+
+    /// Xóa toàn bộ dữ liệu cục bộ: hóa đơn, mọi setting (gồm floor), và reset
+    /// sync_state. Dùng khi đăng xuất. Giữ nguyên schema/bảng, chỉ xóa nội dung.
+    pub fn clear_all(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
+            "DELETE FROM invoices;
+             DELETE FROM settings;
+             UPDATE sync_state SET oldest_date=NULL, newest_date=NULL,
+                 backfill_done=0, last_sync_at=NULL WHERE id=1;",
+        )
     }
 
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
@@ -199,12 +246,25 @@ fn row_to_invoice(r: &rusqlite::Row) -> Result<Invoice> {
     Ok(Invoice {
         id: r.get(0)?,
         kind: InvoiceKind::from_str(&kind_str).unwrap_or(InvoiceKind::Purchase),
-        seller_tax: r.get(2)?,
-        buyer_tax: r.get(3)?,
-        invoice_no: r.get(4)?,
-        date: r.get(5)?,
-        total: r.get(6)?,
-        raw_json: r.get(7)?,
+        nbmst: r.get(2)?,
+        khmshdon: r.get(3)?,
+        khhdon: r.get(4)?,
+        shdon: r.get(5)?,
+        dvtte: r.get(6)?,
+        nbdchi: r.get(7)?,
+        nbten: r.get(8)?,
+        tgtcthue: r.get(9)?,
+        tgtthue: r.get(10)?,
+        tgtttbso: r.get(11)?,
+        tlhdon: r.get(12)?,
+        ttcktmai: r.get(13)?,
+        tthai: r.get(14)?,
+        ttxly: r.get(15)?,
+        ntao: r.get(16)?,
+        nmten: r.get(17)?,
+        nmmst: r.get(18)?,
+        nmdchi: r.get(19)?,
+        raw_json: r.get(20)?,
     })
 }
 
@@ -212,15 +272,28 @@ fn row_to_invoice(r: &rusqlite::Row) -> Result<Invoice> {
 mod tests {
     use super::*;
 
-    fn inv(id: &str, date: &str, total: i64) -> Invoice {
+    fn inv(id: &str, ntao: &str, tgtttbso: f64) -> Invoice {
         Invoice {
             id: id.into(),
             kind: InvoiceKind::Purchase,
-            seller_tax: "0101".into(),
-            buyer_tax: "0202".into(),
-            invoice_no: "001".into(),
-            date: date.into(),
-            total,
+            nbmst: "0101".into(),
+            khmshdon: 1,
+            khhdon: "C25TAC".into(),
+            shdon: 1,
+            dvtte: "VND".into(),
+            nbdchi: "".into(),
+            nbten: "".into(),
+            tgtcthue: 0.0,
+            tgtthue: 0.0,
+            tgtttbso,
+            tlhdon: "".into(),
+            ttcktmai: 0.0,
+            tthai: 1,
+            ttxly: 5,
+            ntao: ntao.into(),
+            nmten: "".into(),
+            nmmst: "0202".into(),
+            nmdchi: "".into(),
             raw_json: "{}".into(),
         }
     }
@@ -228,24 +301,24 @@ mod tests {
     #[test]
     fn upsert_is_idempotent_and_updates() {
         let db = Db::open_in_memory().unwrap();
-        db.upsert_invoices(&[inv("a", "2026-01-01", 100), inv("b", "2026-02-01", 200)])
+        db.upsert_invoices(&[inv("a", "2026-01-01", 100.0), inv("b", "2026-02-01", 200.0)])
             .unwrap();
-        // upsert lại 'a' với total mới + thêm 'a' lần nữa -> không trùng, cập nhật total.
-        db.upsert_invoices(&[inv("a", "2026-01-01", 150)]).unwrap();
+        // upsert lại 'a' với tgtttbso mới + thêm 'a' lần nữa -> không trùng, cập nhật.
+        db.upsert_invoices(&[inv("a", "2026-01-01", 150.0)]).unwrap();
 
         assert_eq!(db.count().unwrap(), 2);
         let all = db.query(&InvoiceFilter::default()).unwrap();
         let a = all.iter().find(|i| i.id == "a").unwrap();
-        assert_eq!(a.total, 150);
+        assert_eq!(a.tgtttbso, 150.0);
     }
 
     #[test]
     fn query_filters_by_date_and_orders_desc() {
         let db = Db::open_in_memory().unwrap();
         db.upsert_invoices(&[
-            inv("a", "2026-01-01", 1),
-            inv("b", "2026-02-01", 2),
-            inv("c", "2026-03-01", 3),
+            inv("a", "2026-01-01", 1.0),
+            inv("b", "2026-02-01", 2.0),
+            inv("c", "2026-03-01", 3.0),
         ])
         .unwrap();
 
@@ -280,9 +353,9 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         // date lưu dạng ISO tdlap; prune theo YYYY-MM-DD.
         db.upsert_invoices(&[
-            inv("a", "2022-05-10T00:00:00Z", 1),
-            inv("b", "2023-06-01T00:00:00Z", 2), // đúng mốc -> GIỮ
-            inv("c", "2024-01-01T00:00:00Z", 3),
+            inv("a", "2022-05-10T00:00:00Z", 1.0),
+            inv("b", "2023-06-01T00:00:00Z", 2.0), // đúng mốc -> GIỮ
+            inv("c", "2024-01-01T00:00:00Z", 3.0),
         ])
         .unwrap();
 

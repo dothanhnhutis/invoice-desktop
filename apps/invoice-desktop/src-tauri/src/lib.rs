@@ -34,8 +34,25 @@ async fn login(
     let token = hddt::login(&state.client, &state.solver, &username, &password, 8, 0.06)
         .await
         .map_err(|e| e.to_string())?;
+    let _ = secrets::save_token(&token); // bền vững qua lần mở app sau
     *state.token.lock().await = Some(token.clone());
     Ok(token)
+}
+
+/// Đăng xuất: xóa credential + floor + token, dừng đồng bộ nền, xóa sạch DB cục bộ.
+#[tauri::command]
+async fn logout(state: State<'_, AppState>) -> Result<(), String> {
+    // 1. Chặn auto-login để luồng sync không tự đăng nhập lại.
+    state.auth_blocked.store(true, Ordering::Relaxed);
+    // 2. Xóa token cache (sync in-flight sẽ bail ở ensure_token trang kế).
+    *state.token.lock().await = None;
+    // 3. Xóa username/password khỏi keychain.
+    secrets::clear().map_err(|e| e.to_string())?;
+    // 4. Xóa toàn bộ dữ liệu cục bộ (hóa đơn, floor + settings, sync_state).
+    state.db.clear_all().map_err(|e| e.to_string())?;
+    // 5. Đánh thức luồng sync để nó kiểm tra lại và vào idle.
+    state.wake.notify_one();
+    Ok(())
 }
 
 /// Thông tin người nộp thuế đang đăng nhập (JSON raw từ cổng).
@@ -182,6 +199,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             login,
+            logout,
             profile,
             set_credentials,
             clear_credentials,
