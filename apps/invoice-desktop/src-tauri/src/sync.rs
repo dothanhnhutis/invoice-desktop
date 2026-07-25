@@ -142,14 +142,15 @@ async fn fetch_window(
         let token = ensure_token(state).await?;
         match hddt::query_purchase(&state.client, &token, &from_s, &to_s, cursor.as_deref()).await {
             Ok(page) => {
-                if page.invoices.is_empty() {
-                    break;
+                // Lưu dữ liệu trang này (upsert idempotent theo id).
+                if !page.invoices.is_empty() {
+                    state.db.upsert_invoices(&page.invoices).map_err(other)?;
+                    saved += page.invoices.len();
                 }
-                state.db.upsert_invoices(&page.invoices).map_err(other)?;
-                saved += page.invoices.len();
+                // Trang cuối khi cổng trả state = null -> đã lấy hết cửa sổ.
                 match page.next_state {
-                    Some(s) => cursor = Some(s),
-                    None => break,
+                    Some(s) => cursor = Some(s), // còn state -> sang trang kế
+                    None => break,               // state = null -> dừng
                 }
                 tokio::time::sleep(THROTTLE).await;
             }
