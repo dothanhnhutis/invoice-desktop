@@ -33,6 +33,7 @@ function RootComponent() {
           <ReactQueryDevtools buttonPosition="bottom-right" />
           <TanStackRouterDevtools position="bottom-right" />
         </main>
+
         <OnlineFooter />
       </TooltipProvider>
     </ThemeProvider>

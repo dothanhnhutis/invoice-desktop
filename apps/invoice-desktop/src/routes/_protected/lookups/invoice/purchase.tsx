@@ -153,13 +153,27 @@ export const columns: ColumnDef<Invoice>[] = [
     },
   },
   {
-    accessorKey: "",
+    accessorKey: "tthai",
     minSize: 160,
     header: () => (
       <div className="text-center text-wrap">Trạng thái hóa đơn</div>
     ),
     cell: ({ row }) => {
-      return <div className="text-center">{row.getValue<string>("")}</div>;
+      const tthai = row.getValue<number>("tthai");
+
+      return (
+        <div className="text-center">
+          {tthai == 0 ? (
+            <p>Chưa được xử lý</p>
+          ) : tthai == 1 ? (
+            <p>Đã được xử lý</p>
+          ) : tthai == 2 ? (
+            <p>Chưa được xử lý nhưng quá hạn</p>
+          ) : (
+            ""
+          )}
+        </div>
+      );
     },
   },
 ];

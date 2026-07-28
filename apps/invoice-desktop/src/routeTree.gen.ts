@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProtectedRouteRouteImport } from './routes/_protected/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ProtectedCoasRouteImport } from './routes/_protected/coas'
 import { Route as ProtectedLookupsInvoiceSoldRouteImport } from './routes/_protected/lookups/invoice/sold'
 import { Route as ProtectedLookupsInvoicePurchaseRouteImport } from './routes/_protected/lookups/invoice/purchase'
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ProtectedCoasRoute = ProtectedCoasRouteImport.update({
+  id: '/coas',
+  path: '/coas',
+  getParentRoute: () => ProtectedRouteRoute,
 } as any)
 const ProtectedLookupsInvoiceSoldRoute =
   ProtectedLookupsInvoiceSoldRouteImport.update({
@@ -38,11 +44,13 @@ const ProtectedLookupsInvoicePurchaseRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/coas': typeof ProtectedCoasRoute
   '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/coas': typeof ProtectedCoasRoute
   '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
 }
@@ -50,18 +58,21 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_protected': typeof ProtectedRouteRouteWithChildren
+  '/_protected/coas': typeof ProtectedCoasRoute
   '/_protected/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/_protected/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/lookups/invoice/purchase' | '/lookups/invoice/sold'
+  fullPaths:
+    '/' | '/coas' | '/lookups/invoice/purchase' | '/lookups/invoice/sold'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/lookups/invoice/purchase' | '/lookups/invoice/sold'
+  to: '/' | '/coas' | '/lookups/invoice/purchase' | '/lookups/invoice/sold'
   id:
     | '__root__'
     | '/'
     | '/_protected'
+    | '/_protected/coas'
     | '/_protected/lookups/invoice/purchase'
     | '/_protected/lookups/invoice/sold'
   fileRoutesById: FileRoutesById
@@ -87,6 +98,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_protected/coas': {
+      id: '/_protected/coas'
+      path: '/coas'
+      fullPath: '/coas'
+      preLoaderRoute: typeof ProtectedCoasRouteImport
+      parentRoute: typeof ProtectedRouteRoute
+    }
     '/_protected/lookups/invoice/sold': {
       id: '/_protected/lookups/invoice/sold'
       path: '/lookups/invoice/sold'
@@ -105,11 +123,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface ProtectedRouteRouteChildren {
+  ProtectedCoasRoute: typeof ProtectedCoasRoute
   ProtectedLookupsInvoicePurchaseRoute: typeof ProtectedLookupsInvoicePurchaseRoute
   ProtectedLookupsInvoiceSoldRoute: typeof ProtectedLookupsInvoiceSoldRoute
 }
 
 const ProtectedRouteRouteChildren: ProtectedRouteRouteChildren = {
+  ProtectedCoasRoute: ProtectedCoasRoute,
   ProtectedLookupsInvoicePurchaseRoute: ProtectedLookupsInvoicePurchaseRoute,
   ProtectedLookupsInvoiceSoldRoute: ProtectedLookupsInvoiceSoldRoute,
 }

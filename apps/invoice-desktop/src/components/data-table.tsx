@@ -17,11 +17,13 @@ import {
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
+  type?: "fix" | "default" | undefined;
 }
 
 export function DataTable<TData, TValue>({
   columns,
   data,
+  type = "default",
 }: DataTableProps<TData, TValue>) {
   const table = useReactTable({
     data,
@@ -32,7 +34,13 @@ export function DataTable<TData, TValue>({
   return (
     <div className="rounded-md border ">
       {/* Bề rộng bảng = tổng size cột; tràn khung -> container overflow-x-auto (ui/table) tự cuộn ngang. */}
-      <Table style={{ width: table.getTotalSize(), tableLayout: "fixed" }}>
+      <Table
+        style={
+          type == "fix"
+            ? { width: table.getTotalSize(), tableLayout: "fixed" }
+            : {}
+        }
+      >
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>

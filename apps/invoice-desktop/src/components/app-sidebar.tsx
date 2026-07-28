@@ -2,6 +2,7 @@ import * as React from "react";
 import {
   BanknoteArrowDownIcon,
   BanknoteArrowUpIcon,
+  FileTextIcon,
   LayoutDashboardIcon,
 } from "lucide-react";
 import logo2 from "@/assets/logo2.png";
@@ -40,6 +41,11 @@ const navMain: (NavLinkType | NavLinkGroup)[] = [
         ],
       },
     ],
+  },
+  {
+    icon: FileTextIcon,
+    title: "Certificate of Analysis",
+    url: "/coas",
   },
 ];
 
