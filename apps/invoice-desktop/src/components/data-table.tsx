@@ -17,7 +17,7 @@ import {
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
-  type?: "fix" | "default" | undefined;
+  type?: "fixed" | "default" | undefined;
 }
 
 export function DataTable<TData, TValue>({
@@ -36,7 +36,7 @@ export function DataTable<TData, TValue>({
       {/* Bề rộng bảng = tổng size cột; tràn khung -> container overflow-x-auto (ui/table) tự cuộn ngang. */}
       <Table
         style={
-          type == "fix"
+          type == "fixed"
             ? { width: table.getTotalSize(), tableLayout: "fixed" }
             : {}
         }
@@ -48,7 +48,7 @@ export function DataTable<TData, TValue>({
                 return (
                   <TableHead
                     key={header.id}
-                    style={{ width: header.getSize() }}
+                    style={type == "fixed" ? { width: header.getSize() } : {}}
                   >
                     {header.isPlaceholder
                       ? null
@@ -73,7 +73,9 @@ export function DataTable<TData, TValue>({
                   <TableCell
                     key={cell.id}
                     className="truncate"
-                    style={{ width: cell.column.getSize() }}
+                    style={
+                      type == "fixed" ? { width: cell.column.getSize() } : {}
+                    }
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>

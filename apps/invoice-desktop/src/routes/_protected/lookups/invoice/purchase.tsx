@@ -318,7 +318,7 @@ function RouteComponent() {
             </InputGroupAddon>
           </InputGroup>
         </form>
-        <DataTable columns={columns} data={invoices.data ?? []} />
+        <DataTable type="fixed" columns={columns} data={invoices.data ?? []} />
 
         <div className="flex items-center justify-between text-sm">
           <button

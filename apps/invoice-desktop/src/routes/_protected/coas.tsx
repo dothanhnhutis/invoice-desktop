@@ -1,15 +1,4 @@
 import { DataTable } from "@/components/data-table";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -19,6 +8,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+
 import {
   InputGroup,
   InputGroupAddon,
@@ -33,9 +23,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ColumnDef } from "@tanstack/react-table";
-import { EllipseIcon, EllipsisIcon, Search } from "lucide-react";
+import { EllipsisIcon, Search } from "lucide-react";
 import React from "react";
 
 export const Route = createFileRoute("/_protected/coas")({
@@ -51,8 +41,8 @@ type RawMaterial = {
   id: number;
   code: string;
   name: string;
-  producer_id: number;
-  country_of_origin: string;
+  producer: string;
+  country_of_origin: string | null;
 };
 
 type COA = {
@@ -91,35 +81,35 @@ const raw_materials: RawMaterial[] = [
     id: 1,
     code: "ICHRM-0248",
     name: "Bakuchiol",
-    producer_id: 1,
+    producer: "Sinoway Industrial Co.,Ltd",
     country_of_origin: "Trung Quốc",
   },
   {
     id: 2,
     code: "ICHRM-0249",
     name: "Activoil Echnidium",
-    producer_id: 2,
+    producer: "Innovacos Corp",
     country_of_origin: "Ý",
   },
   {
     id: 3,
     code: "ICHRM-0250",
     name: "Performalene (TM) PL PE",
-    producer_id: 3,
+    producer: "Baker Petrolite Corporation",
     country_of_origin: "Thái lan",
   },
   {
     id: 4,
     code: "ICHRM-0250",
     name: "DW jojoba golden",
-    producer_id: 4,
+    producer: "VANTAGE Speciaity Ingredients, Inc",
     country_of_origin: "Mỹ",
   },
   {
     id: 5,
     code: "ICHRM-0246",
     name: "BioluminoPeel",
-    producer_id: 5,
+    producer: "CoSeedBioPharm Co., Ltd",
     country_of_origin: "Hàn Quốc",
   },
 ];
@@ -153,12 +143,66 @@ const items = [
   { label: "Mã", value: "code" },
 ];
 
-export const columns: ColumnDef<Producer>[] = [
+export const columns: ColumnDef<RawMaterial>[] = [
+  {
+    id: "code",
+    header: () => <div>Mã nguyên liệu</div>,
+    cell: ({ row }) => {
+      return <p className="line-clamp-2 text-wrap">{row.original.code}</p>;
+    },
+  },
   {
     id: "name",
-    header: () => <div>Tên nhà sản xuất</div>,
+    header: () => <div>Tên nguyên liệu</div>,
     cell: ({ row }) => {
       return <p className="line-clamp-2 text-wrap">{row.original.name}</p>;
+    },
+  },
+  {
+    id: "producer",
+    header: () => <div>Tên nhà sản xuất</div>,
+    cell: ({ row }) => {
+      return <p className="line-clamp-2 text-wrap">{row.original.producer}</p>;
+    },
+  },
+  {
+    id: "producer",
+    header: () => <div>Xuất sứ</div>,
+    cell: ({ row }) => {
+      return (
+        <p className="line-clamp-2 text-wrap">
+          {row.original.country_of_origin}
+        </p>
+      );
+    },
+  },
+  {
+    id: "action",
+    header: () => <div></div>,
+    cell: ({ row }) => {
+      const navigate = useNavigate({ from: "/coas" });
+      return (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost">
+                <EllipsisIcon />
+              </Button>
+            }
+          />
+          <DropdownMenuContent className="w-40" align="start">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Hành động</DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => navigate({ to: "/coas/" + row.id })}
+              >
+                Sửa
+              </DropdownMenuItem>
+              <DropdownMenuItem variant="destructive">Xoá</DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      );
     },
   },
 ];
@@ -167,7 +211,7 @@ function RouteComponent() {
   const [searchType, setSearchType] = React.useState<string | null>("name");
 
   return (
-    <div className="container mx-auto py-10 px-4">
+    <div className="container mx-auto py-10 px-4 space-y-4">
       <div>
         <InputGroup className="max-w-xs">
           <InputGroupInput placeholder="Search..." />
@@ -196,26 +240,10 @@ function RouteComponent() {
             <Search />
           </InputGroupAddon>
         </InputGroup>
-
-        <AlertDialog>
-          <AlertDialogTrigger
-            render={<Button variant="outline">Show Dialog</Button>}
-          />
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Quản lý nhà sản xuất</AlertDialogTitle>
-            </AlertDialogHeader>
-            <div className="rounded-md border">
-              <DataTable columns={columns} data={producers ?? []} />
-            </div>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction>Continue</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </div>
-      <div>table</div>
+      <div>
+        <DataTable columns={columns} data={raw_materials ?? []} />
+      </div>
     </div>
   );
 }
