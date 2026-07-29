@@ -114,30 +114,6 @@ const raw_materials: RawMaterial[] = [
   },
 ];
 
-const coas: COA[] = [
-  {
-    id: 1,
-    lot_no: "25111101",
-    manufacture_date: "11/11/2025",
-    expiration_date: "10/11/2027",
-    path: "",
-  },
-  {
-    id: 2,
-    lot_no: "250812-Z1013270",
-    manufacture_date: "11/08/2025",
-    expiration_date: "12/08/2027",
-    path: "",
-  },
-  {
-    id: 3,
-    lot_no: "BFC0901",
-    manufacture_date: "09/03/2026",
-    expiration_date: "08/03/2028",
-    path: "",
-  },
-];
-
 const items = [
   { label: "Tên", value: "name" },
   { label: "Mã", value: "code" },
