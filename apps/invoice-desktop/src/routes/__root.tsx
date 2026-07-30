@@ -8,6 +8,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { ThemeProvider } from "@/contexts/theme-context";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 import OnlineFooter from "@/components/online-footer";
 
 export const Route = createRootRouteWithContext<{
@@ -35,6 +36,7 @@ function RootComponent() {
         </main>
 
         <OnlineFooter />
+        <Toaster />
       </TooltipProvider>
     </ThemeProvider>
   );

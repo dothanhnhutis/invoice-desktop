@@ -90,6 +90,74 @@ pub struct InvoiceFilter {
     pub limit: Option<u32>,
 }
 
+/// Nguyên liệu (nguyên liệu thô). Một nguyên liệu có nhiều COA.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RawMaterial {
+    pub id: i64,
+    /// Mã nguyên liệu "ICHRM-xxx" (KHÔNG unique — có thể trùng).
+    pub code: String,
+    pub name: String,
+    /// Tên nhà sản xuất (cột TEXT, không tách bảng).
+    pub producer: String,
+    pub country_of_origin: Option<String>,
+    /// Soft delete: None = còn hiệu lực, Some(ISO) = đã xóa.
+    pub deleted_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Phiếu kiểm nghiệm (COA — Certificate of Analysis) thuộc về một RawMaterial.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Coa {
+    pub id: i64,
+    /// Khóa ngoại tới `raw_materials.id`.
+    pub raw_material_id: i64,
+    pub lot_no: String,
+    pub manufacture_date: Option<String>,
+    pub expiration_date: Option<String>,
+    /// Đường dẫn file COA.
+    pub path: Option<String>,
+    pub deleted_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Input tạo/sửa nguyên liệu (id + timestamps do DB sinh).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewRawMaterial {
+    pub code: String,
+    pub name: String,
+    pub producer: String,
+    pub country_of_origin: Option<String>,
+}
+
+/// Input tạo/sửa COA (id + timestamps do DB sinh).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewCoa {
+    pub raw_material_id: i64,
+    pub lot_no: String,
+    pub manufacture_date: Option<String>,
+    pub expiration_date: Option<String>,
+    pub path: Option<String>,
+}
+
+/// Lọc danh sách nguyên liệu (tìm theo code HOẶC name — khớp UI search name/code).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RawMaterialFilter {
+    /// LIKE %q% trên cả `code` và `name`.
+    pub q: Option<String>,
+    pub limit: Option<u32>,
+    /// Bỏ qua bao nhiêu dòng (dùng cho phân trang; chỉ áp dụng khi có `limit`).
+    pub offset: Option<u32>,
+}
+
+/// Kết quả một trang: dữ liệu trang hiện tại + tổng số bản ghi khớp bộ lọc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Paged<T> {
+    pub data: Vec<T>,
+    pub total: i64,
+}
+
 /// Tiến độ đồng bộ (một dòng duy nhất trong DB).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SyncState {

@@ -32,5 +32,7 @@ reqwest.workspace = true                          # đặt tên kiểu reqwest::
 tokio.workspace = true                            # tokio::sync::Mutex cho token
 keyring.workspace = true                          # lưu credential ở OS keychain
 chrono = "0.4"                                    # tính cửa sổ tháng + timestamp sync
+uuid = { version = "1", features = ["v7"] }       # đặt tên file COA (UUID v7)
+zip = "2"                                         # nén nhiều COA thành .zip khi tải về
 
 # [profile.release] định nghĩa ở root Cargo.toml (áp cho cả workspace).

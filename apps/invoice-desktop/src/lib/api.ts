@@ -69,9 +69,74 @@ export type UserProfile = {
   expired: number;
 };
 
+export type RawMaterial = {
+  id: number;
+  code: string;
+  name: string;
+  producer: string;
+  country_of_origin: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NewRawMaterial = {
+  code: string;
+  name: string;
+  producer: string;
+  country_of_origin: string | null;
+};
+
+export type Paged<T> = {
+  data: T[];
+  total: number;
+};
+
+export type Coa = {
+  id: number;
+  raw_material_id: number;
+  lot_no: string;
+  manufacture_date: string | null;
+  expiration_date: string | null;
+  path: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NewCoaInput = {
+  raw_material_id: number;
+  lot_no: string;
+  manufacture_date: string | null;
+  expiration_date: string | null;
+  file_name: string;
+  file_bytes: number[];
+};
+
 export const api = {
-  // login: (username: string, password: string) =>
-  //   call<LoginResponse>("login", {
-  //     payload: { username, password },
-  //   }),
+  listRawMaterials: (
+    {
+      q,
+      page = 0,
+      pageSize = 10,
+    }: { q?: string; page?: number; pageSize?: number } = {},
+  ) =>
+    call<Paged<RawMaterial>>("list_raw_materials", {
+      filter: { q, limit: pageSize, offset: page * pageSize },
+    }),
+  getRawMaterialById: (id: number) =>
+    call<RawMaterial>("get_raw_material_by_id", { id }),
+  createRawMaterial: (input: NewRawMaterial) =>
+    call<RawMaterial>("create_raw_material", { input }),
+  updateRawMaterial: (id: number, input: NewRawMaterial) =>
+    call<RawMaterial>("update_raw_material", { id, input }),
+  listCoas: (rawMaterialId: number) =>
+    call<Coa[]>("list_coas", { rawMaterialId }),
+  createCoa: (payload: NewCoaInput) => call<Coa>("create_coa", { payload }),
+  readCoaFile: (path: string) => call<number[]>("read_coa_file", { path }),
+  openCoaFile: (path: string) => call<void>("open_coa_file", { path }),
+  deleteCoa: (id: number) => call<void>("delete_coa", { id }),
+  /** Tải các COA đã chọn về Downloads (1 file: copy; nhiều: .zip). Trả đường dẫn kết quả. */
+  downloadCoas: (ids: number[], baseName?: string) =>
+    call<string>("download_coas", { ids, baseName }),
 };

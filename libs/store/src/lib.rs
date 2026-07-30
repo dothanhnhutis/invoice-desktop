@@ -7,7 +7,10 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use domain::{Invoice, InvoiceFilter, InvoiceKind, SyncState};
+use domain::{
+    Coa, Invoice, InvoiceFilter, InvoiceKind, NewCoa, NewRawMaterial, RawMaterial,
+    RawMaterialFilter, SyncState,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
@@ -56,6 +59,35 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS raw_materials (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    code              TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    producer          TEXT NOT NULL,
+    country_of_origin TEXT,
+    deleted_at        TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- `code` duy nhất trong phạm vi hàng còn hiệu lực (cho phép tái dùng sau soft-delete).
+-- DROP index thường (bản cũ) trước vì trùng tên/không-unique.
+DROP INDEX IF EXISTS idx_raw_materials_code;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_raw_materials_code
+    ON raw_materials(code) WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS coas (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    raw_material_id   INTEGER NOT NULL REFERENCES raw_materials(id) ON DELETE CASCADE,
+    lot_no            TEXT NOT NULL,
+    manufacture_date  TEXT,
+    expiration_date   TEXT,
+    path              TEXT,
+    deleted_at        TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_coas_raw_material_id ON coas(raw_material_id);
 "#;
 
 impl Db {
@@ -72,6 +104,9 @@ impl Db {
     }
 
     fn from_conn(conn: Connection) -> Result<Self> {
+        // Bật FK để `ON DELETE CASCADE` (coas -> raw_materials) có hiệu lực.
+        // PRAGMA đặt theo connection; Db giữ 1 connection nên đặt một lần là đủ.
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -222,11 +257,192 @@ impl Db {
         )
     }
 
+    // ---- Nguyên liệu (raw_materials) ----------------------------------------
+
+    /// Chèn nguyên liệu mới. Trả `id` vừa sinh.
+    pub fn insert_raw_material(&self, m: &NewRawMaterial) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO raw_materials (code, name, producer, country_of_origin) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![m.code, m.name, m.producer, m.country_of_origin],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Cập nhật nguyên liệu (kèm `updated_at`).
+    pub fn update_raw_material(&self, id: i64, m: &NewRawMaterial) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE raw_materials SET code=?1, name=?2, producer=?3, country_of_origin=?4, \
+             updated_at=datetime('now') WHERE id=?5",
+            params![m.code, m.name, m.producer, m.country_of_origin, id],
+        )?;
+        Ok(())
+    }
+
+    /// Soft delete nguyên liệu (đánh dấu `deleted_at`).
+    pub fn soft_delete_raw_material(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE raw_materials SET deleted_at=datetime('now'), updated_at=datetime('now') \
+             WHERE id=?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Lấy một nguyên liệu còn hiệu lực theo `id`.
+    pub fn get_raw_material(&self, id: i64) -> Result<Option<RawMaterial>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, code, name, producer, country_of_origin, deleted_at, created_at, updated_at \
+             FROM raw_materials WHERE id=?1 AND deleted_at IS NULL",
+            params![id],
+            row_to_raw_material,
+        )
+        .optional()
+    }
+
+    /// Danh sách nguyên liệu còn hiệu lực (lọc theo `q` trên code/name).
+    pub fn list_raw_materials(&self, f: &RawMaterialFilter) -> Result<Vec<RawMaterial>> {
+        let mut sql = String::from(
+            "SELECT id, code, name, producer, country_of_origin, deleted_at, created_at, updated_at \
+             FROM raw_materials WHERE deleted_at IS NULL",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(q) = &f.q {
+            sql.push_str(" AND (code LIKE ? OR name LIKE ?)");
+            let like = format!("%{q}%");
+            args.push(Box::new(like.clone()));
+            args.push(Box::new(like));
+        }
+        sql.push_str(" ORDER BY id DESC");
+        if let Some(limit) = f.limit {
+            sql.push_str(" LIMIT ?");
+            args.push(Box::new(limit as i64));
+            // OFFSET chỉ hợp lệ khi đi kèm LIMIT (ràng buộc của SQLite).
+            if let Some(offset) = f.offset {
+                sql.push_str(" OFFSET ?");
+                args.push(Box::new(offset as i64));
+            }
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), row_to_raw_material)?;
+        rows.collect()
+    }
+
+    /// Đếm tổng số nguyên liệu còn hiệu lực khớp bộ lọc `q` (bỏ qua limit/offset).
+    pub fn count_raw_materials(&self, f: &RawMaterialFilter) -> Result<i64> {
+        let mut sql =
+            String::from("SELECT COUNT(*) FROM raw_materials WHERE deleted_at IS NULL");
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(q) = &f.q {
+            sql.push_str(" AND (code LIKE ? OR name LIKE ?)");
+            let like = format!("%{q}%");
+            args.push(Box::new(like.clone()));
+            args.push(Box::new(like));
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+        conn.query_row(&sql, param_refs.as_slice(), |r| r.get(0))
+    }
+
+    // ---- COA (coas) ---------------------------------------------------------
+
+    /// Chèn COA mới. Trả `id` vừa sinh.
+    pub fn insert_coa(&self, c: &NewCoa) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO coas (raw_material_id, lot_no, manufacture_date, expiration_date, path) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                c.raw_material_id,
+                c.lot_no,
+                c.manufacture_date,
+                c.expiration_date,
+                c.path
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Cập nhật COA (kèm `updated_at`). `raw_material_id` cũng có thể đổi.
+    pub fn update_coa(&self, id: i64, c: &NewCoa) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE coas SET raw_material_id=?1, lot_no=?2, manufacture_date=?3, \
+             expiration_date=?4, path=?5, updated_at=datetime('now') WHERE id=?6",
+            params![
+                c.raw_material_id,
+                c.lot_no,
+                c.manufacture_date,
+                c.expiration_date,
+                c.path,
+                id
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Soft delete COA (đánh dấu `deleted_at`).
+    pub fn soft_delete_coa(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE coas SET deleted_at=datetime('now'), updated_at=datetime('now') WHERE id=?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Danh sách COA còn hiệu lực của một nguyên liệu.
+    pub fn list_coas(&self, raw_material_id: i64) -> Result<Vec<Coa>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, raw_material_id, lot_no, manufacture_date, expiration_date, path, \
+             deleted_at, created_at, updated_at \
+             FROM coas WHERE raw_material_id=?1 AND deleted_at IS NULL ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map(params![raw_material_id], row_to_coa)?;
+        rows.collect()
+    }
+
+    /// Lấy một COA còn hiệu lực theo `id`.
+    pub fn get_coa(&self, id: i64) -> Result<Option<Coa>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, raw_material_id, lot_no, manufacture_date, expiration_date, path, \
+             deleted_at, created_at, updated_at \
+             FROM coas WHERE id=?1 AND deleted_at IS NULL",
+            params![id],
+            row_to_coa,
+        )
+        .optional()
+    }
+
+    /// Gán đường dẫn file cho COA (sau khi ghi file ra đĩa).
+    pub fn set_coa_path(&self, id: i64, path: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE coas SET path=?1, updated_at=datetime('now') WHERE id=?2",
+            params![path, id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        conn.query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| {
-            r.get(0)
-        })
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
         .optional()
     }
 
@@ -268,6 +484,33 @@ fn row_to_invoice(r: &rusqlite::Row) -> Result<Invoice> {
     })
 }
 
+fn row_to_raw_material(r: &rusqlite::Row) -> Result<RawMaterial> {
+    Ok(RawMaterial {
+        id: r.get(0)?,
+        code: r.get(1)?,
+        name: r.get(2)?,
+        producer: r.get(3)?,
+        country_of_origin: r.get(4)?,
+        deleted_at: r.get(5)?,
+        created_at: r.get(6)?,
+        updated_at: r.get(7)?,
+    })
+}
+
+fn row_to_coa(r: &rusqlite::Row) -> Result<Coa> {
+    Ok(Coa {
+        id: r.get(0)?,
+        raw_material_id: r.get(1)?,
+        lot_no: r.get(2)?,
+        manufacture_date: r.get(3)?,
+        expiration_date: r.get(4)?,
+        path: r.get(5)?,
+        deleted_at: r.get(6)?,
+        created_at: r.get(7)?,
+        updated_at: r.get(8)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,7 +547,8 @@ mod tests {
         db.upsert_invoices(&[inv("a", "2026-01-01", 100.0), inv("b", "2026-02-01", 200.0)])
             .unwrap();
         // upsert lại 'a' với tgtttbso mới + thêm 'a' lần nữa -> không trùng, cập nhật.
-        db.upsert_invoices(&[inv("a", "2026-01-01", 150.0)]).unwrap();
+        db.upsert_invoices(&[inv("a", "2026-01-01", 150.0)])
+            .unwrap();
 
         assert_eq!(db.count().unwrap(), 2);
         let all = db.query(&InvoiceFilter::default()).unwrap();
@@ -345,7 +589,10 @@ mod tests {
         assert_eq!(db.get_setting("floor").unwrap(), None);
         db.set_setting("floor", "2022-01-01").unwrap();
         db.set_setting("floor", "2023-06-01").unwrap(); // upsert
-        assert_eq!(db.get_setting("floor").unwrap().as_deref(), Some("2023-06-01"));
+        assert_eq!(
+            db.get_setting("floor").unwrap().as_deref(),
+            Some("2023-06-01")
+        );
     }
 
     #[test]
@@ -386,5 +633,164 @@ mod tests {
         assert_eq!(got.backfill_done, true);
         assert_eq!(got.oldest_date.as_deref(), Some("2025-01-01"));
         assert_eq!(got.last_sync_at, Some(1_700_000_000));
+    }
+
+    // ---- raw_materials / coas ----------------------------------------------
+
+    fn new_rm(code: &str, name: &str) -> NewRawMaterial {
+        NewRawMaterial {
+            code: code.into(),
+            name: name.into(),
+            producer: "Acme".into(),
+            country_of_origin: Some("Việt Nam".into()),
+        }
+    }
+
+    fn new_coa(rm_id: i64, lot_no: &str) -> NewCoa {
+        NewCoa {
+            raw_material_id: rm_id,
+            lot_no: lot_no.into(),
+            manufacture_date: Some("2025-01-01".into()),
+            expiration_date: Some("2027-01-01".into()),
+            path: None,
+        }
+    }
+
+    #[test]
+    fn insert_and_list_raw_materials() {
+        let db = Db::open_in_memory().unwrap();
+        let id1 = db.insert_raw_material(&new_rm("ICHRM-0248", "Bakuchiol")).unwrap();
+        let id2 = db.insert_raw_material(&new_rm("ICHRM-0249", "Activoil")).unwrap();
+        assert!(id2 > id1);
+
+        let all = db.list_raw_materials(&RawMaterialFilter::default()).unwrap();
+        assert_eq!(all.len(), 2);
+        // ORDER BY id DESC -> mới nhất trước.
+        assert_eq!(all[0].id, id2);
+        // Timestamp do DB tự sinh (không rỗng).
+        assert!(!all[0].created_at.is_empty());
+        assert!(all[0].deleted_at.is_none());
+    }
+
+    #[test]
+    fn raw_material_has_many_coas() {
+        let db = Db::open_in_memory().unwrap();
+        let rm = db.insert_raw_material(&new_rm("ICHRM-0248", "Bakuchiol")).unwrap();
+        let other = db.insert_raw_material(&new_rm("ICHRM-0249", "Activoil")).unwrap();
+
+        db.insert_coa(&new_coa(rm, "LOT-1")).unwrap();
+        db.insert_coa(&new_coa(rm, "LOT-2")).unwrap();
+        db.insert_coa(&new_coa(rm, "LOT-3")).unwrap();
+        db.insert_coa(&new_coa(other, "LOT-X")).unwrap();
+
+        let coas = db.list_coas(rm).unwrap();
+        assert_eq!(coas.len(), 3);
+        assert!(coas.iter().all(|c| c.raw_material_id == rm));
+        // COA của nguyên liệu khác không lẫn.
+        assert_eq!(db.list_coas(other).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn soft_delete_excludes_from_list() {
+        let db = Db::open_in_memory().unwrap();
+        let rm = db.insert_raw_material(&new_rm("ICHRM-0248", "Bakuchiol")).unwrap();
+        let coa = db.insert_coa(&new_coa(rm, "LOT-1")).unwrap();
+
+        db.soft_delete_raw_material(rm).unwrap();
+        assert!(db.get_raw_material(rm).unwrap().is_none());
+        assert_eq!(db.list_raw_materials(&RawMaterialFilter::default()).unwrap().len(), 0);
+
+        db.soft_delete_coa(coa).unwrap();
+        assert_eq!(db.list_coas(rm).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn filter_q_matches_code_or_name() {
+        let db = Db::open_in_memory().unwrap();
+        db.insert_raw_material(&new_rm("ICHRM-0248", "Bakuchiol")).unwrap();
+        db.insert_raw_material(&new_rm("ICHRM-0249", "Activoil")).unwrap();
+
+        // khớp theo code
+        let by_code = db
+            .list_raw_materials(&RawMaterialFilter {
+                q: Some("0248".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(by_code.len(), 1);
+        assert_eq!(by_code[0].code, "ICHRM-0248");
+
+        // khớp theo name
+        let by_name = db
+            .list_raw_materials(&RawMaterialFilter {
+                q: Some("Activoil".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].name, "Activoil");
+    }
+
+    #[test]
+    fn list_raw_materials_paginates_and_counts() {
+        let db = Db::open_in_memory().unwrap();
+        for i in 1..=5 {
+            db.insert_raw_material(&new_rm(&format!("ICHRM-000{i}"), &format!("RM {i}")))
+                .unwrap();
+        }
+
+        // Trang đầu (limit=2, offset=0) -> 2 dòng.
+        let page1 = db
+            .list_raw_materials(&RawMaterialFilter {
+                limit: Some(2),
+                offset: Some(0),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page1.len(), 2);
+
+        // Trang cuối (offset=4) -> 1 dòng còn lại.
+        let last = db
+            .list_raw_materials(&RawMaterialFilter {
+                limit: Some(2),
+                offset: Some(4),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(last.len(), 1);
+
+        // Đếm tổng bỏ qua limit/offset.
+        assert_eq!(
+            db.count_raw_materials(&RawMaterialFilter {
+                limit: Some(2),
+                offset: Some(0),
+                ..Default::default()
+            })
+            .unwrap(),
+            5
+        );
+
+        // Đếm có lọc q.
+        assert_eq!(
+            db.count_raw_materials(&RawMaterialFilter {
+                q: Some("RM 3".into()),
+                ..Default::default()
+            })
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn duplicate_active_code_rejected() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.insert_raw_material(&new_rm("ICHRM-0001", "A")).unwrap();
+
+        // Trùng code trên hàng còn hiệu lực -> lỗi (partial unique index).
+        assert!(db.insert_raw_material(&new_rm("ICHRM-0001", "B")).is_err());
+
+        // Soft-delete rồi tạo lại cùng code -> OK.
+        db.soft_delete_raw_material(id).unwrap();
+        assert!(db.insert_raw_material(&new_rm("ICHRM-0001", "C")).is_ok());
     }
 }

@@ -1,3 +1,4 @@
+import React from "react";
 import { DataTable } from "@/components/data-table";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,15 +10,7 @@ import {
   FieldSeparator,
   FieldSet,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,87 +19,103 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Textarea } from "@/components/ui/textarea";
-import { createFileRoute } from "@tanstack/react-router";
-import { ColumnDef } from "@tanstack/react-table";
-import { EllipsisIcon } from "lucide-react";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ColumnDef, RowSelectionState } from "@tanstack/react-table";
+import { DownloadIcon, EllipsisIcon, FileIcon } from "lucide-react";
+import { toast } from "sonner";
+import RawMaterialDialog from "@/components/raw_material_dialog";
+import CoaDialog from "@/components/coa_dialog";
+import CoaViewerSheet from "@/components/coa_viewer_sheet";
+import { api, type Coa } from "@/lib/api";
 
 export const Route = createFileRoute("/_protected/coas_/$id")({
+  beforeLoad: async ({ params }) => {
+    const id = Number(params.id);
+    if (!Number.isInteger(id)) throw redirect({ to: "/coas" });
+    try {
+      const raw_material = await api.getRawMaterialById(id);
+      return { raw_material };
+    } catch {
+      throw redirect({ to: "/coas" });
+    }
+  },
+  loader: ({ context: { raw_material } }) => raw_material,
   component: RouteComponent,
 });
 
-const countries = [
-  { label: "Choose country", value: null },
-  { label: "Việt Nam", value: "Việt Nam" },
-  { label: "Trung Quốc", value: "Trung Quốc" },
-  { label: "Ý", value: "Ý" },
-  { label: "Hàn Quốc", value: "Hàn Quốc" },
-];
-
-type COA = {
-  id: number;
-  lot_no: string;
-  manufacture_date: string | null;
-  expiration_date: string | null;
-  path: string;
-};
-const coas: COA[] = [
-  {
-    id: 1,
-    lot_no: "25111101",
-    manufacture_date: "11/11/2025",
-    expiration_date: "10/11/2027",
-    path: "",
-  },
-  {
-    id: 2,
-    lot_no: "250812-Z1013270",
-    manufacture_date: "11/08/2025",
-    expiration_date: "12/08/2027",
-    path: "",
-  },
-  {
-    id: 3,
-    lot_no: "BFC0901",
-    manufacture_date: "09/03/2026",
-    expiration_date: "08/03/2028",
-    path: "",
-  },
-];
-
-export const columns: ColumnDef<COA>[] = [
-  {
-    id: "lot_no",
-    header: () => <div>Số lô</div>,
-    cell: ({ row }) => {
-      return <p className="line-clamp-2 text-wrap">{row.original.lot_no}</p>;
+function makeCoaColumns(
+  onView: (coa: Coa) => void,
+  onDelete: (id: number) => void,
+): ColumnDef<Coa>[] {
+  return [
+    {
+      id: "select",
+      header: ({ table }) => (
+        <input
+          type="checkbox"
+          className="size-4 align-middle"
+          aria-label="Chọn tất cả"
+          checked={table.getIsAllPageRowsSelected()}
+          onChange={table.getToggleAllPageRowsSelectedHandler()}
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          type="checkbox"
+          className="size-4 align-middle"
+          aria-label="Chọn dòng"
+          checked={row.getIsSelected()}
+          onChange={row.getToggleSelectedHandler()}
+        />
+      ),
     },
-  },
-  {
-    id: "manufacture_date",
-    header: () => <div>Ngày sản xuất</div>,
-    cell: ({ row }) => {
-      return (
+    {
+      id: "lot_no",
+      header: () => <div>Số lô</div>,
+      cell: ({ row }) => (
+        <p className="line-clamp-2 text-wrap">{row.original.lot_no}</p>
+      ),
+    },
+    {
+      id: "manufacture_date",
+      header: () => <div>Ngày sản xuất</div>,
+      cell: ({ row }) => (
         <p className="line-clamp-2 text-wrap">
-          {row.original.manufacture_date}
+          {row.original.manufacture_date ?? "-"}
         </p>
-      );
+      ),
     },
-  },
-  {
-    id: "expiration_date",
-    header: () => <div>Hạn sử dụng</div>,
-    cell: ({ row }) => {
-      return (
-        <p className="line-clamp-2 text-wrap">{row.original.expiration_date}</p>
-      );
+    {
+      id: "expiration_date",
+      header: () => <div>Hạn sử dụng</div>,
+      cell: ({ row }) => (
+        <p className="line-clamp-2 text-wrap">
+          {row.original.expiration_date ?? "-"}
+        </p>
+      ),
     },
-  },
-  {
-    id: "action",
-    header: () => <div></div>,
-    cell: ({ row }) => {
-      return (
+    {
+      id: "file",
+      header: () => <div>File</div>,
+      cell: ({ row }) =>
+        row.original.path ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onView(row.original)}
+          >
+            <FileIcon />
+            Xem
+          </Button>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
+    },
+    {
+      id: "action",
+      header: () => <div></div>,
+      cell: ({ row }) => (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -118,70 +127,142 @@ export const columns: ColumnDef<COA>[] = [
           <DropdownMenuContent className="w-40" align="start">
             <DropdownMenuGroup>
               <DropdownMenuLabel>Hành động</DropdownMenuLabel>
-              <DropdownMenuItem>Sửa</DropdownMenuItem>
-              <DropdownMenuItem variant="destructive">Xoá</DropdownMenuItem>
+              {row.original.path && (
+                <DropdownMenuItem onClick={() => onView(row.original)}>
+                  Mở file
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => onDelete(row.original.id)}
+              >
+                Xoá
+              </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-      );
+      ),
     },
-  },
-];
+  ];
+}
 
 function RouteComponent() {
+  const data = Route.useLoaderData();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  const coas = useQuery({
+    queryKey: ["coas", data.id],
+    queryFn: () => api.listCoas(data.id),
+  });
+
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const [viewing, setViewing] = React.useState<Coa | null>(null);
+
+  const deleteCoa = async (id: number) => {
+    try {
+      await api.deleteCoa(id);
+      queryClient.invalidateQueries({ queryKey: ["coas", data.id] });
+      toast.success("Đã xoá COA");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const selectedIds = Object.keys(rowSelection)
+    .filter((k) => rowSelection[k])
+    .map(Number);
+
+  const downloadSelected = async () => {
+    if (!selectedIds.length) return;
+    try {
+      await api.downloadCoas(selectedIds, data.code);
+      toast.success(
+        selectedIds.length === 1
+          ? "Đã tải COA về Downloads"
+          : `Đã tải ${selectedIds.length} COA (.zip) về Downloads`,
+      );
+      setRowSelection({});
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const columns = React.useMemo(
+    () => makeCoaColumns(setViewing, deleteCoa),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.id],
+  );
+
   return (
     <div className="container mx-auto p-4">
       <FieldGroup>
         <FieldSet>
-          <FieldLegend>Thông tin nguyên liệu</FieldLegend>
+          <div className="flex gap-4 items-center justify-between">
+            <FieldLegend>Thông tin nguyên liệu</FieldLegend>
+            <RawMaterialDialog
+              data={data}
+              onSaved={() =>
+                router.invalidate({ filter: (m) => m.routeId === Route.id })
+              }
+            />
+          </div>
           <FieldGroup>
             <div className="grid md:grid-cols-2 gap-4">
               <Field>
                 <FieldLabel htmlFor="code">Mã nguyên liệu</FieldLabel>
-                <Input id="code" placeholder="ICHRM-xxx" required />
-                <FieldDescription>
-                  Mã nguyên liệu trên google sheet
-                </FieldDescription>
+                <FieldDescription>{data.code}</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="name">Tên nguyên liệu</FieldLabel>
-                <Input id="name" placeholder="Tên nguyên liệu" required />
+                <FieldDescription>{data.name}</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="producer">Tên nhà sản xuất</FieldLabel>
-                <Input id="producer" placeholder="Tên nhà sản xuất" required />
-                <FieldDescription>
-                  Tên nhà sản xuất nguyên liệu
-                </FieldDescription>
+                <FieldDescription>{data.producer}</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="country_of_origin">Quốc gia</FieldLabel>
-                <Select items={countries}>
-                  <SelectTrigger id="country_of_origin">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {countries.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <FieldDescription>Quốc gia của nhà sản xuất</FieldDescription>
+                <FieldDescription>{data.country_of_origin}</FieldDescription>
               </Field>
             </div>
           </FieldGroup>
         </FieldSet>
         <FieldSeparator />
         <FieldSet>
-          <FieldLegend>Certificate of Analysis (COA)</FieldLegend>
+          <div className="flex gap-4 items-center justify-between">
+            <FieldLegend>Certificate of Analysis (COA)</FieldLegend>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                disabled={selectedIds.length === 0}
+                onClick={downloadSelected}
+              >
+                <DownloadIcon />
+                <span className="hidden sm:inline">
+                  Tải về{selectedIds.length ? ` (${selectedIds.length})` : ""}
+                </span>
+              </Button>
+              <CoaDialog rawMaterialId={data.id} />
+            </div>
+          </div>
           <FieldDescription>Danh sách COA của nguyên liệu</FieldDescription>
-          <DataTable columns={columns} data={coas ?? []} />
+          <DataTable
+            columns={columns}
+            data={coas.data ?? []}
+            enableClientPagination
+            enableRowSelection
+            rowSelection={rowSelection}
+            onRowSelectionChange={setRowSelection}
+            getRowId={(c) => String(c.id)}
+          />
         </FieldSet>
       </FieldGroup>
+
+      <CoaViewerSheet
+        coa={viewing}
+        onOpenChange={(o) => !o && setViewing(null)}
+      />
     </div>
   );
 }
