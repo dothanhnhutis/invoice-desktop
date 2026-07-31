@@ -304,6 +304,18 @@ impl Db {
         .optional()
     }
 
+    /// Lấy một nguyên liệu còn hiệu lực theo `code` (khớp chính xác).
+    pub fn get_raw_material_by_code(&self, code: &str) -> Result<Option<RawMaterial>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, code, name, producer, country_of_origin, deleted_at, created_at, updated_at \
+             FROM raw_materials WHERE code=?1 AND deleted_at IS NULL",
+            params![code],
+            row_to_raw_material,
+        )
+        .optional()
+    }
+
     /// Danh sách nguyên liệu còn hiệu lực (lọc theo `q` trên code/name).
     pub fn list_raw_materials(&self, f: &RawMaterialFilter) -> Result<Vec<RawMaterial>> {
         let mut sql = String::from(
@@ -352,6 +364,40 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let param_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
         conn.query_row(&sql, param_refs.as_slice(), |r| r.get(0))
+    }
+
+    /// Nhập hàng loạt trong 1 transaction. Trả `(số đã tạo, các code bị bỏ qua do trùng)`.
+    ///
+    /// Trùng = vi phạm UNIQUE `ux_raw_materials_code`: mã đã tồn tại ở hàng còn hiệu lực
+    /// HOẶC đã được chèn ở dòng trước trong cùng batch (unique kiểm tra ngay theo từng câu
+    /// lệnh, không defer). Các lỗi khác -> rollback cả batch.
+    pub fn insert_raw_materials_bulk(
+        &self,
+        rows: &[NewRawMaterial],
+    ) -> Result<(usize, Vec<String>)> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut created = 0usize;
+        let mut duplicates: Vec<String> = Vec::new();
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO raw_materials (code, name, producer, country_of_origin) \
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for m in rows {
+                match stmt.execute(params![m.code, m.name, m.producer, m.country_of_origin]) {
+                    Ok(_) => created += 1,
+                    Err(rusqlite::Error::SqliteFailure(e, _))
+                        if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+                    {
+                        duplicates.push(m.code.clone());
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        tx.commit()?;
+        Ok((created, duplicates))
     }
 
     // ---- COA (coas) ---------------------------------------------------------
@@ -732,6 +778,20 @@ mod tests {
     }
 
     #[test]
+    fn get_by_code_returns_active_only() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.insert_raw_material(&new_rm("ICHRM-0248", "Bakuchiol")).unwrap();
+
+        let found = db.get_raw_material_by_code("ICHRM-0248").unwrap();
+        assert_eq!(found.map(|m| m.id), Some(id));
+        assert!(db.get_raw_material_by_code("ICHRM-9999").unwrap().is_none());
+
+        // Sau soft-delete -> không tìm thấy.
+        db.soft_delete_raw_material(id).unwrap();
+        assert!(db.get_raw_material_by_code("ICHRM-0248").unwrap().is_none());
+    }
+
+    #[test]
     fn list_raw_materials_paginates_and_counts() {
         let db = Db::open_in_memory().unwrap();
         for i in 1..=5 {
@@ -792,5 +852,29 @@ mod tests {
         // Soft-delete rồi tạo lại cùng code -> OK.
         db.soft_delete_raw_material(id).unwrap();
         assert!(db.insert_raw_material(&new_rm("ICHRM-0001", "C")).is_ok());
+    }
+
+    #[test]
+    fn bulk_insert_skips_duplicates_in_db_and_batch() {
+        let db = Db::open_in_memory().unwrap();
+        // Đã có sẵn ICHRM-0001 trong DB.
+        db.insert_raw_material(&new_rm("ICHRM-0001", "Cũ")).unwrap();
+
+        let rows = vec![
+            new_rm("ICHRM-0001", "Trùng DB"),    // trùng bản ghi đang có
+            new_rm("ICHRM-0002", "Mới A"),       // hợp lệ
+            new_rm("ICHRM-0003", "Mới B"),       // hợp lệ
+            new_rm("ICHRM-0002", "Trùng batch"), // trùng dòng ICHRM-0002 ở trên
+        ];
+        let (created, duplicates) = db.insert_raw_materials_bulk(&rows).unwrap();
+
+        assert_eq!(created, 2); // chỉ 0002 + 0003
+        assert_eq!(duplicates, vec!["ICHRM-0001", "ICHRM-0002"]);
+
+        // Tổng bản ghi còn hiệu lực = 3 (0001 cũ + 0002 + 0003), không ghi đè "Cũ".
+        let all = db.list_raw_materials(&RawMaterialFilter::default()).unwrap();
+        assert_eq!(all.len(), 3);
+        let old = all.iter().find(|m| m.code == "ICHRM-0001").unwrap();
+        assert_eq!(old.name, "Cũ");
     }
 }

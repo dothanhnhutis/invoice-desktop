@@ -104,6 +104,12 @@ export type Coa = {
   updated_at: string;
 };
 
+export type ImportResult = {
+  created: number;
+  duplicates: string[];
+  invalid: { line: number; reason: string }[];
+};
+
 export type NewCoaInput = {
   raw_material_id: number;
   lot_no: string;
@@ -111,6 +117,17 @@ export type NewCoaInput = {
   expiration_date: string | null;
   file_name: string;
   file_bytes: number[];
+};
+
+export type CoaBulkResult = {
+  created: number;
+  errors: { file_name: string; reason: string }[];
+};
+
+export type ExportResult = {
+  downloaded: number;
+  path: string | null;
+  not_found: { line: number; code: string; lot_no: string; reason: string }[];
 };
 
 export const api = {
@@ -130,13 +147,22 @@ export const api = {
     call<RawMaterial>("create_raw_material", { input }),
   updateRawMaterial: (id: number, input: NewRawMaterial) =>
     call<RawMaterial>("update_raw_material", { id, input }),
+  /** Nhập nguyên liệu hàng loạt từ nội dung file CSV (bytes). */
+  importRawMaterials: (csvBytes: number[]) =>
+    call<ImportResult>("import_raw_materials", { csvBytes }),
   listCoas: (rawMaterialId: number) =>
     call<Coa[]>("list_coas", { rawMaterialId }),
   createCoa: (payload: NewCoaInput) => call<Coa>("create_coa", { payload }),
+  /** Tạo nhiều COA cùng lúc (upload cả thư mục). */
+  createCoasBulk: (payloads: NewCoaInput[]) =>
+    call<CoaBulkResult>("create_coas_bulk", { payloads }),
   readCoaFile: (path: string) => call<number[]>("read_coa_file", { path }),
   openCoaFile: (path: string) => call<void>("open_coa_file", { path }),
   deleteCoa: (id: number) => call<void>("delete_coa", { id }),
   /** Tải các COA đã chọn về Downloads (1 file: copy; nhiều: .zip). Trả đường dẫn kết quả. */
   downloadCoas: (ids: number[], baseName?: string) =>
     call<string>("download_coas", { ids, baseName }),
+  /** Tải COA theo danh sách CSV (code, lot_no, [manufacture_date], [expiration_date]). */
+  downloadCoasFromCsv: (csvBytes: number[], baseName?: string) =>
+    call<ExportResult>("download_coas_from_csv", { csvBytes, baseName }),
 };

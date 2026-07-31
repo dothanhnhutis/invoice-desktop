@@ -1,5 +1,7 @@
 import { DataTable } from "@/components/data-table";
 import RawMaterialDialog from "@/components/raw_material_dialog";
+import RawMaterialImport from "@/components/raw_material_import";
+import RawMaterialExport from "@/components/raw_material_export";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -19,11 +21,22 @@ import { api, type RawMaterial } from "@/lib/api";
 import { useDebounce } from "@/hooks/use-debounce";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ColumnDef, PaginationState } from "@tanstack/react-table";
+import { ColumnDef, OnChangeFn, PaginationState } from "@tanstack/react-table";
 import { EllipsisIcon, Search } from "lucide-react";
 import React from "react";
 
+const PAGE_SIZES = [10, 20, 30, 40, 50];
+
+type CoasSearch = { q?: string; page: number; size: number };
+
 export const Route = createFileRoute("/_protected/coas")({
+  // Điều kiện tìm/phân trang nằm trên URL → giữ nguyên khi xem chi tiết rồi Back.
+  validateSearch: (s: Record<string, unknown>): CoasSearch => {
+    const size = PAGE_SIZES.includes(Number(s.size)) ? Number(s.size) : 10;
+    const page = Number(s.page) >= 1 ? Math.floor(Number(s.page)) : 1; // 1-based cho URL
+    const q = typeof s.q === "string" && s.q.trim() ? s.q : undefined;
+    return { q, page, size };
+  },
   component: RouteComponent,
 });
 
@@ -100,39 +113,55 @@ function makeColumns(
 }
 
 function RouteComponent() {
-  const [q, setQ] = React.useState("");
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
   const [editing, setEditing] = React.useState<RawMaterial | null>(null);
-  const [pagination, setPagination] = React.useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: 10,
-  });
 
-  const debouncedQ = useDebounce(q, 500);
+  // Ô tìm gõ tức thì (cục bộ), debounce rồi mới ghi vào URL.
+  const [qInput, setQInput] = React.useState(search.q ?? "");
+  const debouncedQ = useDebounce(qInput, 500);
+
+  React.useEffect(() => {
+    if ((debouncedQ.trim() || "") !== (search.q ?? "")) {
+      // replace: gõ nhiều ký tự không tạo nhiều mục lịch sử; đổi từ khoá -> về trang 1.
+      navigate({
+        replace: true,
+        search: (p) => ({ ...p, q: debouncedQ.trim() || undefined, page: 1 }),
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQ]);
+
+  const pagination: PaginationState = {
+    pageIndex: search.page - 1,
+    pageSize: search.size,
+  };
+
+  const onPaginationChange: OnChangeFn<PaginationState> = (updater) => {
+    const next = typeof updater === "function" ? updater(pagination) : updater;
+    const sizeChanged = next.pageSize !== pagination.pageSize;
+    navigate({
+      // Đổi số dòng/trang -> luôn về trang 1.
+      search: (p) => ({
+        ...p,
+        size: next.pageSize,
+        page: sizeChanged ? 1 : next.pageIndex + 1,
+      }),
+    });
+  };
 
   const rawMaterials = useQuery({
-    queryKey: [
-      "raw_materials",
-      debouncedQ,
-      pagination.pageIndex,
-      pagination.pageSize,
-    ],
+    queryKey: ["raw_materials", search.q ?? "", search.page, search.size],
     queryFn: () =>
       api.listRawMaterials({
-        q: debouncedQ || undefined,
-        page: pagination.pageIndex,
-        pageSize: pagination.pageSize,
+        q: search.q,
+        page: search.page - 1,
+        pageSize: search.size,
       }),
     placeholderData: keepPreviousData,
   });
 
-  // Từ khoá (đã debounce) đổi -> về trang đầu.
-  React.useEffect(() => {
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [debouncedQ]);
-
-  const pageCount = Math.ceil(
-    (rawMaterials.data?.total ?? 0) / pagination.pageSize,
-  );
+  const pageCount = Math.ceil((rawMaterials.data?.total ?? 0) / search.size);
 
   const columns = React.useMemo(() => makeColumns(setEditing), []);
 
@@ -142,22 +171,26 @@ function RouteComponent() {
         <InputGroup className="max-w-xs">
           <InputGroupInput
             placeholder="Tìm theo mã hoặc tên..."
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
           />
           <InputGroupAddon align="inline-end">
             <Search />
           </InputGroupAddon>
         </InputGroup>
 
-        <RawMaterialDialog />
+        <div className="flex items-center gap-2">
+          <RawMaterialExport />
+          <RawMaterialImport />
+          <RawMaterialDialog />
+        </div>
       </div>
 
       <DataTable
         columns={columns}
         data={rawMaterials.data?.data ?? []}
         pagination={pagination}
-        onPaginationChange={setPagination}
+        onPaginationChange={onPaginationChange}
         pageCount={pageCount}
       />
 

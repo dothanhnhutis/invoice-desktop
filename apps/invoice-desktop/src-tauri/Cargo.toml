@@ -34,5 +34,6 @@ keyring.workspace = true                          # lưu credential ở OS keych
 chrono = "0.4"                                    # tính cửa sổ tháng + timestamp sync
 uuid = { version = "1", features = ["v7"] }       # đặt tên file COA (UUID v7)
 zip = "2"                                         # nén nhiều COA thành .zip khi tải về
+csv = "1"                                         # parse CSV khi nhập nguyên liệu hàng loạt
 
 # [profile.release] định nghĩa ở root Cargo.toml (áp cho cả workspace).

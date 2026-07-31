@@ -25,6 +25,7 @@ import * as z from "zod";
 import { PlusIcon } from "lucide-react";
 import { Spinner } from "./ui/spinner";
 import { ApiError, api } from "@/lib/api";
+import { isVnDate } from "@/lib/date";
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
 const ACCEPT = "image/png,image/jpeg,image/webp,application/pdf";
@@ -33,10 +34,15 @@ export type CoaDialogProps = {
   rawMaterialId: number;
 };
 
+const vnDate = z
+  .string()
+  .nullable()
+  .refine((v) => !v || isVnDate(v), "Ngày dạng dd/mm/yyyy hoặc mm/yyyy.");
+
 const formSchema = z.object({
   lot_no: z.string().min(1, "Số lô không được để trống."),
-  manufacture_date: z.string().nullable(),
-  expiration_date: z.string().nullable(),
+  manufacture_date: vnDate,
+  expiration_date: vnDate,
 });
 
 const CoaDialog = ({ rawMaterialId }: CoaDialogProps) => {
@@ -142,36 +148,48 @@ const CoaDialog = ({ rawMaterialId }: CoaDialogProps) => {
 
           <form.Field
             name="manufacture_date"
-            children={(field) => (
-              <Field>
-                <FieldLabel htmlFor={field.name}>Ngày sản xuất</FieldLabel>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="date"
-                  value={field.state.value ?? ""}
-                  onBlur={field.handleBlur}
-                  onChange={(e) => field.handleChange(e.target.value || null)}
-                />
-              </Field>
-            )}
+            children={(field) => {
+              const isInvalid =
+                field.state.meta.isTouched && !field.state.meta.isValid;
+              return (
+                <Field data-invalid={isInvalid}>
+                  <FieldLabel htmlFor={field.name}>Ngày sản xuất</FieldLabel>
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value ?? ""}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value || null)}
+                    aria-invalid={isInvalid}
+                    placeholder="dd/mm/yyyy hoặc mm/yyyy"
+                  />
+                  {isInvalid && <FieldError errors={field.state.meta.errors} />}
+                </Field>
+              );
+            }}
           />
 
           <form.Field
             name="expiration_date"
-            children={(field) => (
-              <Field>
-                <FieldLabel htmlFor={field.name}>Hạn sử dụng</FieldLabel>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="date"
-                  value={field.state.value ?? ""}
-                  onBlur={field.handleBlur}
-                  onChange={(e) => field.handleChange(e.target.value || null)}
-                />
-              </Field>
-            )}
+            children={(field) => {
+              const isInvalid =
+                field.state.meta.isTouched && !field.state.meta.isValid;
+              return (
+                <Field data-invalid={isInvalid}>
+                  <FieldLabel htmlFor={field.name}>Hạn sử dụng</FieldLabel>
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value ?? ""}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value || null)}
+                    aria-invalid={isInvalid}
+                    placeholder="dd/mm/yyyy hoặc mm/yyyy"
+                  />
+                  {isInvalid && <FieldError errors={field.state.meta.errors} />}
+                </Field>
+              );
+            }}
           />
 
           <Field data-invalid={!!fileError}>

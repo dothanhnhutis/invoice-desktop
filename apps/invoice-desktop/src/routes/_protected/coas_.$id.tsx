@@ -26,18 +26,21 @@ import { DownloadIcon, EllipsisIcon, FileIcon } from "lucide-react";
 import { toast } from "sonner";
 import RawMaterialDialog from "@/components/raw_material_dialog";
 import CoaDialog from "@/components/coa_dialog";
+import CoaBulkDialog from "@/components/coa_bulk_dialog";
 import CoaViewerSheet from "@/components/coa_viewer_sheet";
 import { api, type Coa } from "@/lib/api";
+import { formatVnDate } from "@/lib/date";
 
 export const Route = createFileRoute("/_protected/coas_/$id")({
   beforeLoad: async ({ params }) => {
     const id = Number(params.id);
-    if (!Number.isInteger(id)) throw redirect({ to: "/coas" });
+    if (!Number.isInteger(id))
+      throw redirect({ to: "/coas", search: { page: 1, size: 10 } });
     try {
       const raw_material = await api.getRawMaterialById(id);
       return { raw_material };
     } catch {
-      throw redirect({ to: "/coas" });
+      throw redirect({ to: "/coas", search: { page: 1, size: 10 } });
     }
   },
   loader: ({ context: { raw_material } }) => raw_material,
@@ -82,7 +85,7 @@ function makeCoaColumns(
       header: () => <div>Ngày sản xuất</div>,
       cell: ({ row }) => (
         <p className="line-clamp-2 text-wrap">
-          {row.original.manufacture_date ?? "-"}
+          {formatVnDate(row.original.manufacture_date)}
         </p>
       ),
     },
@@ -91,7 +94,7 @@ function makeCoaColumns(
       header: () => <div>Hạn sử dụng</div>,
       cell: ({ row }) => (
         <p className="line-clamp-2 text-wrap">
-          {row.original.expiration_date ?? "-"}
+          {formatVnDate(row.original.expiration_date)}
         </p>
       ),
     },
@@ -243,6 +246,7 @@ function RouteComponent() {
                   Tải về{selectedIds.length ? ` (${selectedIds.length})` : ""}
                 </span>
               </Button>
+              <CoaBulkDialog rawMaterialId={data.id} />
               <CoaDialog rawMaterialId={data.id} />
             </div>
           </div>

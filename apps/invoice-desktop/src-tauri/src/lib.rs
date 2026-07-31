@@ -178,6 +178,144 @@ fn update_raw_material(
         .ok_or_else(|| "không tìm thấy nguyên liệu sau cập nhật".to_string())
 }
 
+/// Một dòng CSV không hợp lệ (không nhập được) kèm lý do.
+#[derive(serde::Serialize)]
+struct InvalidRow {
+    /// Số dòng trong file (1-based, tính cả dòng header).
+    line: usize,
+    reason: String,
+}
+
+/// Kết quả nhập nguyên liệu từ CSV.
+#[derive(serde::Serialize)]
+struct ImportResult {
+    /// Số nguyên liệu tạo mới thành công.
+    created: usize,
+    /// Các mã bị bỏ qua do trùng (đã có trong DB hoặc trùng trong chính file).
+    duplicates: Vec<String>,
+    /// Các dòng không hợp lệ (sai mã / thiếu tên / hỏng), không được nhập.
+    invalid: Vec<InvalidRow>,
+}
+
+/// `code` đúng chuẩn `ICHRM-####` (tiền tố + đúng 4 chữ số, hết chuỗi).
+fn is_valid_code(code: &str) -> bool {
+    match code.strip_prefix("ICHRM-") {
+        Some(rest) => rest.len() == 4 && rest.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// Nhập nguyên liệu hàng loạt từ nội dung file CSV (bytes).
+///
+/// Header nhận diện theo tên (không theo vị trí): `code`, `coa_name`/`name`, `producer`,
+/// `country_of_origin`. Dòng sai mã (không `ICHRM-####`) hoặc thiếu tên -> liệt kê ở `invalid`,
+/// không nhập. Mã trùng (DB hoặc trong chính file) -> bỏ qua, liệt kê ở `duplicates`.
+#[tauri::command]
+fn import_raw_materials(
+    state: State<'_, AppState>,
+    csv_bytes: Vec<u8>,
+) -> Result<ImportResult, String> {
+    // Bỏ BOM UTF-8 nếu có để header đầu không bị dính "\u{feff}".
+    let bytes: &[u8] = csv_bytes
+        .strip_prefix(&[0xEF, 0xBB, 0xBF])
+        .unwrap_or(&csv_bytes);
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(bytes);
+
+    // Map tên cột -> chỉ số (lowercase). Chấp nhận `coa_name` hoặc `name` cho tên nguyên liệu.
+    let headers = rdr
+        .headers()
+        .map_err(|e| format!("Không đọc được header CSV: {e}"))?;
+    let mut idx_code: Option<usize> = None;
+    let mut idx_name: Option<usize> = None;
+    let mut idx_producer: Option<usize> = None;
+    let mut idx_country: Option<usize> = None;
+    for (i, h) in headers.iter().enumerate() {
+        match h.trim().to_lowercase().as_str() {
+            "code" => idx_code = Some(i),
+            "coa_name" | "name" => idx_name = Some(i),
+            "producer" => idx_producer = Some(i),
+            "country_of_origin" => idx_country = Some(i),
+            _ => {}
+        }
+    }
+    let mut missing: Vec<&str> = Vec::new();
+    if idx_code.is_none() {
+        missing.push("code");
+    }
+    if idx_name.is_none() {
+        missing.push("coa_name");
+    }
+    if !missing.is_empty() {
+        return Err(format!("File CSV thiếu cột: {}", missing.join(", ")));
+    }
+    let idx_code = idx_code.unwrap();
+    let idx_name = idx_name.unwrap();
+
+    let mut valid: Vec<NewRawMaterial> = Vec::new();
+    let mut invalid: Vec<InvalidRow> = Vec::new();
+    let get = |rec: &csv::StringRecord, i: Option<usize>| -> String {
+        i.and_then(|i| rec.get(i)).unwrap_or("").trim().to_string()
+    };
+
+    for (i, rec) in rdr.records().enumerate() {
+        let line = i + 2; // +1 header, +1 để về 1-based.
+        let rec = match rec {
+            Ok(r) => r,
+            Err(_) => {
+                invalid.push(InvalidRow {
+                    line,
+                    reason: "Dòng CSV không hợp lệ".into(),
+                });
+                continue;
+            }
+        };
+        let code = get(&rec, Some(idx_code));
+        let name = get(&rec, Some(idx_name));
+        if !is_valid_code(&code) {
+            invalid.push(InvalidRow {
+                line,
+                reason: "Mã không đúng ICHRM-####".into(),
+            });
+            continue;
+        }
+        if name.is_empty() {
+            invalid.push(InvalidRow {
+                line,
+                reason: "Thiếu tên nguyên liệu".into(),
+            });
+            continue;
+        }
+        let producer = get(&rec, idx_producer);
+        let country = get(&rec, idx_country);
+        valid.push(NewRawMaterial {
+            code,
+            name,
+            producer,
+            country_of_origin: if country.is_empty() {
+                None
+            } else {
+                Some(country)
+            },
+        });
+    }
+
+    let (created, duplicates) = state
+        .db
+        .insert_raw_materials_bulk(&valid)
+        .map_err(|e| e.to_string())?;
+
+    Ok(ImportResult {
+        created,
+        duplicates,
+        invalid,
+    })
+}
+
 /// Danh sách COA của một nguyên liệu.
 #[tauri::command]
 fn list_coas(state: State<'_, AppState>, raw_material_id: i64) -> Result<Vec<Coa>, String> {
@@ -195,16 +333,16 @@ struct CreateCoaInput {
     file_bytes: Vec<u8>,
 }
 
-/// Tạo COA: ghi file vào `app_data_dir/coa/<uuidv7>.<ext>` (cạnh SQLite),
-/// chèn bản ghi với đường dẫn tương đối, trả bản ghi COA.
-#[tauri::command]
-fn create_coa(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    payload: CreateCoaInput,
+/// Ghi 1 file COA vào `app_data_dir/coa/<uuidv7>.<ext>` (cạnh SQLite) rồi chèn bản ghi
+/// (đường dẫn tương đối để DB portable). Trả bản ghi COA vừa tạo. Dùng chung cho tạo 1 file
+/// và tạo hàng loạt.
+fn write_and_insert_coa(
+    app: &tauri::AppHandle,
+    db: &store::Db,
+    p: &CreateCoaInput,
 ) -> Result<Coa, String> {
     // 1. Tên file = UUID v7 (có tiền tố thời gian). Đường dẫn tương đối để DB portable.
-    let ext = std::path::Path::new(&payload.file_name)
+    let ext = std::path::Path::new(&p.file_name)
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
@@ -218,24 +356,67 @@ fn create_coa(
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&abs, &payload.file_bytes).map_err(|e| e.to_string())?;
+    std::fs::write(&abs, &p.file_bytes).map_err(|e| e.to_string())?;
 
     // 2. Chèn bản ghi (path đã có) rồi trả về.
-    let id = state
-        .db
+    let id = db
         .insert_coa(&NewCoa {
-            raw_material_id: payload.raw_material_id,
-            lot_no: payload.lot_no,
-            manufacture_date: payload.manufacture_date,
-            expiration_date: payload.expiration_date,
+            raw_material_id: p.raw_material_id,
+            lot_no: p.lot_no.clone(),
+            manufacture_date: p.manufacture_date.clone(),
+            expiration_date: p.expiration_date.clone(),
             path: Some(rel),
         })
         .map_err(|e| e.to_string())?;
-    state
-        .db
-        .get_coa(id)
+    db.get_coa(id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "không tìm thấy COA vừa tạo".to_string())
+}
+
+/// Tạo COA: ghi file vào `app_data_dir/coa/<uuidv7>.<ext>` (cạnh SQLite),
+/// chèn bản ghi với đường dẫn tương đối, trả bản ghi COA.
+#[tauri::command]
+fn create_coa(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    payload: CreateCoaInput,
+) -> Result<Coa, String> {
+    write_and_insert_coa(&app, &state.db, &payload)
+}
+
+/// Một file lỗi khi tạo COA hàng loạt (không chặn các file khác).
+#[derive(serde::Serialize)]
+struct CoaBulkError {
+    file_name: String,
+    reason: String,
+}
+
+/// Kết quả tạo COA hàng loạt: số tạo thành công + danh sách file lỗi.
+#[derive(serde::Serialize)]
+struct CoaBulkResult {
+    created: usize,
+    errors: Vec<CoaBulkError>,
+}
+
+/// Tạo nhiều COA cùng lúc (upload cả thư mục). Best-effort: 1 file lỗi vẫn tiếp tục các file còn lại.
+#[tauri::command]
+fn create_coas_bulk(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    payloads: Vec<CreateCoaInput>,
+) -> Result<CoaBulkResult, String> {
+    let mut created = 0usize;
+    let mut errors: Vec<CoaBulkError> = Vec::new();
+    for p in &payloads {
+        match write_and_insert_coa(&app, &state.db, p) {
+            Ok(_) => created += 1,
+            Err(reason) => errors.push(CoaBulkError {
+                file_name: p.file_name.clone(),
+                reason,
+            }),
+        }
+    }
+    Ok(CoaBulkResult { created, errors })
 }
 
 /// Đọc nội dung file COA (đường dẫn tương đối trong `app_data_dir`) để xem trước trong app.
@@ -332,55 +513,36 @@ fn unique_path(dir: &std::path::Path, base: &str, ext: &str) -> std::path::PathB
     candidate
 }
 
-/// Tải các COA đã chọn về thư mục Downloads.
-/// - 1 file: copy thẳng `COA_<số lô>_<ngày SX>.<ext>`.
-/// - nhiều file: nén thành 1 `.zip` (mỗi entry `COA_<số lô>_<ngày SX>.<ext>`).
-/// Kèm ngày SX để không trùng tên khi các COA cùng số lô khác ngày sản xuất.
-/// Trả đường dẫn kết quả và mở thư mục Downloads.
-#[tauri::command]
-fn download_coas(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    ids: Vec<i64>,
+/// (số lô, ngày SX, HSD, đường dẫn tuyệt đối, đuôi) — đơn vị để copy/zip khi export.
+type CoaItem = (String, Option<String>, Option<String>, std::path::PathBuf, String);
+
+/// Chuyển COA -> item export nếu file tồn tại trên đĩa (ngược lại None).
+fn coa_to_item(base_dir: &std::path::Path, coa: Coa) -> Option<CoaItem> {
+    let rel = coa.path?;
+    let abs = base_dir.join(&rel);
+    if !abs.exists() {
+        return None;
+    }
+    let ext = std::path::Path::new(&rel)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{e}"))
+        .unwrap_or_default();
+    Some((coa.lot_no, coa.manufacture_date, coa.expiration_date, abs, ext))
+}
+
+/// Copy/zip danh sách COA về Downloads: 1 file → copy thẳng; nhiều → nén 1 `.zip`
+/// (mỗi entry `COA_<số lô>_<ngày SX>.<ext>`, thêm ` (n)` nếu trùng tên). Mở thư mục
+/// Downloads và trả đường dẫn kết quả.
+fn export_items_to_downloads(
+    app: &tauri::AppHandle,
+    items: &[CoaItem],
     base_name: Option<String>,
 ) -> Result<String, String> {
     use std::io::Write;
 
-    if ids.is_empty() {
-        return Err("Chưa chọn COA nào".to_string());
-    }
-
-    let base_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let dl = app.path().download_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dl).map_err(|e| e.to_string())?;
-
-    // Thu thập (số lô, ngày SX, HSD, đường dẫn tuyệt đối, đuôi) cho các COA có file.
-    let mut items: Vec<(String, Option<String>, Option<String>, std::path::PathBuf, String)> =
-        Vec::new();
-    for id in &ids {
-        if let Some(coa) = state.db.get_coa(*id).map_err(|e| e.to_string())? {
-            if let Some(rel) = coa.path {
-                let abs = base_dir.join(&rel);
-                if abs.exists() {
-                    let ext = std::path::Path::new(&rel)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| format!(".{e}"))
-                        .unwrap_or_default();
-                    items.push((
-                        coa.lot_no,
-                        coa.manufacture_date,
-                        coa.expiration_date,
-                        abs,
-                        ext,
-                    ));
-                }
-            }
-        }
-    }
-    if items.is_empty() {
-        return Err("Các COA đã chọn chưa có file".to_string());
-    }
 
     let result = if items.len() == 1 {
         let (lot, mdate, edate, src, ext) = &items[0];
@@ -388,17 +550,14 @@ fn download_coas(
         std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
         dest
     } else {
-        let zip_base = format!(
-            "COA_{}",
-            sanitize_filename(&base_name.unwrap_or_else(|| "export".to_string()))
-        );
+        let zip_base = sanitize_filename(&base_name.unwrap_or_else(|| "COA_export".to_string()));
         let zip_path = unique_path(&dl, &zip_base, ".zip");
         let file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
         let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for (lot, mdate, edate, src, ext) in &items {
+        for (lot, mdate, edate, src, ext) in items {
             let stem = coa_stem(lot, mdate, edate);
             let mut name = format!("{stem}{ext}");
             let mut n = 1;
@@ -421,6 +580,263 @@ fn download_coas(
         .open_path(dl.to_string_lossy().to_string(), None::<String>);
 
     Ok(result.to_string_lossy().to_string())
+}
+
+/// Parse ngày linh hoạt → (year, month, day?). Hỗ trợ `dd/mm/yyyy`, `mm/yyyy`
+/// (định dạng COA hiện tại) và `yyyy-mm-dd`, `yyyy-mm` (dữ liệu cũ ISO).
+fn parse_flex_date(s: &str) -> Option<(i32, u32, Option<u32>)> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let n = |x: &str| x.parse::<u32>().ok();
+    if s.contains('/') {
+        let p: Vec<&str> = s.split('/').collect();
+        match p.as_slice() {
+            // mm/yyyy
+            [m, y] => {
+                let (m, y) = (n(m)?, n(y)? as i32);
+                (1..=12).contains(&m).then_some((y, m, None))
+            }
+            // dd/mm/yyyy
+            [d, m, y] => {
+                let (d, m, y) = (n(d)?, n(m)?, n(y)? as i32);
+                ((1..=12).contains(&m) && (1..=31).contains(&d)).then_some((y, m, Some(d)))
+            }
+            _ => None,
+        }
+    } else if s.contains('-') {
+        let p: Vec<&str> = s.split('-').collect();
+        match p.as_slice() {
+            // yyyy-mm
+            [y, m] => {
+                let (y, m) = (n(y)? as i32, n(m)?);
+                (1..=12).contains(&m).then_some((y, m, None))
+            }
+            // yyyy-mm-dd
+            [y, m, d] => {
+                let (y, m, d) = (n(y)? as i32, n(m)?, n(d)?);
+                ((1..=12).contains(&m) && (1..=31).contains(&d)).then_some((y, m, Some(d)))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+/// Khớp ngày CSV với ngày COA: cùng year+month; nếu CẢ HAI có ngày thì ngày phải bằng
+/// (một bên chỉ có tháng/năm → chỉ so tháng/năm).
+fn dates_match(csv: &str, db: &Option<String>) -> bool {
+    let Some((cy, cm, cd)) = parse_flex_date(csv) else {
+        return false;
+    };
+    let Some(dbs) = db.as_deref() else {
+        return false;
+    };
+    let Some((dy, dm, dd)) = parse_flex_date(dbs) else {
+        return false;
+    };
+    if cy != dy || cm != dm {
+        return false;
+    }
+    match (cd, dd) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
+/// Tải các COA đã chọn (theo id) về thư mục Downloads.
+#[tauri::command]
+fn download_coas(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    base_name: Option<String>,
+) -> Result<String, String> {
+    if ids.is_empty() {
+        return Err("Chưa chọn COA nào".to_string());
+    }
+    let base_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut items: Vec<CoaItem> = Vec::new();
+    for id in &ids {
+        if let Some(coa) = state.db.get_coa(*id).map_err(|e| e.to_string())? {
+            if let Some(item) = coa_to_item(&base_dir, coa) {
+                items.push(item);
+            }
+        }
+    }
+    if items.is_empty() {
+        return Err("Các COA đã chọn chưa có file".to_string());
+    }
+    // Tải theo checkbox: giữ tên zip `COA_<mã nguyên liệu>.zip`.
+    let base = base_name.unwrap_or_else(|| "export".to_string());
+    export_items_to_downloads(&app, &items, Some(format!("COA_{base}")))
+}
+
+/// Một dòng CSV không tải được COA (kèm lý do) khi tải theo danh sách.
+#[derive(serde::Serialize)]
+struct NotFoundRow {
+    line: usize,
+    code: String,
+    lot_no: String,
+    reason: String,
+}
+
+/// Kết quả tải COA theo file CSV.
+#[derive(serde::Serialize)]
+struct ExportResult {
+    downloaded: usize,
+    path: Option<String>,
+    not_found: Vec<NotFoundRow>,
+}
+
+/// Tải COA theo danh sách CSV `code,lot_no[,manufacture_date][,expiration_date]`.
+/// Khớp `code` + `lot_no`; cột ngày *có mặt & không rỗng* phải khớp (chuẩn hoá dd/mm/yyyy
+/// và ISO, hỗ trợ mm/yyyy). Dòng không khớp → gom vào `not_found`, không chặn dòng khác.
+#[tauri::command]
+fn download_coas_from_csv(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    csv_bytes: Vec<u8>,
+    base_name: Option<String>,
+) -> Result<ExportResult, String> {
+    let bytes: &[u8] = csv_bytes
+        .strip_prefix(&[0xEF, 0xBB, 0xBF])
+        .unwrap_or(&csv_bytes);
+    let mut rdr = csv::ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(bytes);
+
+    // Map header theo tên; bắt buộc `code`, `lot_no`.
+    let headers = rdr
+        .headers()
+        .map_err(|e| format!("Không đọc được header CSV: {e}"))?;
+    let (mut idx_code, mut idx_lot, mut idx_m, mut idx_e) = (None, None, None, None);
+    for (i, h) in headers.iter().enumerate() {
+        match h.trim().to_lowercase().as_str() {
+            "code" => idx_code = Some(i),
+            "lot_no" => idx_lot = Some(i),
+            "manufacture_date" => idx_m = Some(i),
+            "expiration_date" => idx_e = Some(i),
+            _ => {}
+        }
+    }
+    let mut missing: Vec<&str> = Vec::new();
+    if idx_code.is_none() {
+        missing.push("code");
+    }
+    if idx_lot.is_none() {
+        missing.push("lot_no");
+    }
+    if !missing.is_empty() {
+        return Err(format!("File CSV thiếu cột: {}", missing.join(", ")));
+    }
+    let idx_code = idx_code.unwrap();
+    let idx_lot = idx_lot.unwrap();
+
+    let base_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let get = |rec: &csv::StringRecord, i: Option<usize>| -> String {
+        i.and_then(|i| rec.get(i)).unwrap_or("").trim().to_string()
+    };
+
+    let mut items: Vec<CoaItem> = Vec::new();
+    let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut not_found: Vec<NotFoundRow> = Vec::new();
+
+    for (i, rec) in rdr.records().enumerate() {
+        let line = i + 2; // +1 header, +1 để về 1-based.
+        let rec = match rec {
+            Ok(r) => r,
+            Err(_) => {
+                not_found.push(NotFoundRow {
+                    line,
+                    code: String::new(),
+                    lot_no: String::new(),
+                    reason: "Dòng CSV không hợp lệ".into(),
+                });
+                continue;
+            }
+        };
+        let code = get(&rec, Some(idx_code));
+        let lot = get(&rec, Some(idx_lot));
+        let mdate = get(&rec, idx_m);
+        let edate = get(&rec, idx_e);
+
+        if code.is_empty() || lot.is_empty() {
+            not_found.push(NotFoundRow {
+                line,
+                code,
+                lot_no: lot,
+                reason: "Thiếu code/lô".into(),
+            });
+            continue;
+        }
+        let rm = match state
+            .db
+            .get_raw_material_by_code(&code)
+            .map_err(|e| e.to_string())?
+        {
+            Some(rm) => rm,
+            None => {
+                not_found.push(NotFoundRow {
+                    line,
+                    code,
+                    lot_no: lot,
+                    reason: "Không tìm thấy mã nguyên liệu".into(),
+                });
+                continue;
+            }
+        };
+        let matched: Vec<Coa> = state
+            .db
+            .list_coas(rm.id)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|c| c.lot_no.trim() == lot)
+            .filter(|c| mdate.is_empty() || dates_match(&mdate, &c.manufacture_date))
+            .filter(|c| edate.is_empty() || dates_match(&edate, &c.expiration_date))
+            .collect();
+
+        let mut added = 0usize;
+        for c in matched {
+            let id = c.id;
+            if seen.contains(&id) {
+                added += 1; // đã thêm từ dòng khác — vẫn coi là tìm thấy.
+                continue;
+            }
+            if let Some(item) = coa_to_item(&base_dir, c) {
+                seen.insert(id);
+                items.push(item);
+                added += 1;
+            }
+        }
+        if added == 0 {
+            not_found.push(NotFoundRow {
+                line,
+                code,
+                lot_no: lot,
+                reason: "Không có COA khớp hoặc chưa có file".into(),
+            });
+        }
+    }
+
+    if items.is_empty() {
+        return Ok(ExportResult {
+            downloaded: 0,
+            path: None,
+            not_found,
+        });
+    }
+    let downloaded = items.len();
+    let path = export_items_to_downloads(&app, &items, base_name)?;
+    Ok(ExportResult {
+        downloaded,
+        path: Some(path),
+        not_found,
+    })
 }
 
 /// Mốc dừng backfill hiện tại (ngày sớm nhất tải về).
@@ -528,15 +944,58 @@ pub fn run() {
             list_raw_materials,
             create_raw_material,
             update_raw_material,
+            import_raw_materials,
             list_coas,
             create_coa,
+            create_coas_bulk,
             read_coa_file,
             open_coa_file,
             delete_coa,
             download_coas,
+            download_coas_from_csv,
             get_floor,
             set_floor,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_valid_code_checks_pattern() {
+        assert!(is_valid_code("ICHRM-0001"));
+        assert!(!is_valid_code("ICHRM-1"));
+        assert!(!is_valid_code("ICH-0001"));
+        assert!(!is_valid_code("ICHRM-00A1"));
+        assert!(!is_valid_code("ICHRM-00012"));
+    }
+
+    #[test]
+    fn parse_flex_date_formats() {
+        assert_eq!(parse_flex_date("25/11/2025"), Some((2025, 11, Some(25))));
+        assert_eq!(parse_flex_date("12/2025"), Some((2025, 12, None)));
+        assert_eq!(parse_flex_date("2025-11-25"), Some((2025, 11, Some(25))));
+        assert_eq!(parse_flex_date("2025-11"), Some((2025, 11, None)));
+        assert_eq!(parse_flex_date(""), None);
+        assert_eq!(parse_flex_date("bad"), None);
+        assert_eq!(parse_flex_date("13/2025"), None); // tháng > 12
+    }
+
+    #[test]
+    fn dates_match_rules() {
+        // Cùng ngày, khác định dạng (ISO cũ vs dd/mm/yyyy).
+        assert!(dates_match("25/11/2025", &Some("2025-11-25".into())));
+        assert!(dates_match("25/11/2025", &Some("25/11/2025".into())));
+        // mm/yyyy khớp ngày đầy đủ cùng tháng/năm (một bên thiếu ngày).
+        assert!(dates_match("12/2025", &Some("08/12/2025".into())));
+        assert!(dates_match("08/12/2025", &Some("12/2025".into())));
+        // Khác ngày / khác tháng → không khớp.
+        assert!(!dates_match("24/11/2025", &Some("25/11/2025".into())));
+        assert!(!dates_match("25/10/2025", &Some("25/11/2025".into())));
+        // DB None → không khớp khi CSV có ngày.
+        assert!(!dates_match("25/11/2025", &None));
+    }
 }
