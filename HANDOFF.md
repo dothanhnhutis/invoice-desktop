@@ -3,8 +3,10 @@
 Tài liệu bàn giao để **tiếp tục công việc ở máy khác**. Đây là nguồn ngữ cảnh chính (memory
 của Claude nằm ở `~/.claude/...` **cục bộ theo máy**, không theo repo).
 
-> Cập nhật lần cuối: phiên thêm hệ **Nguyên liệu (raw materials) + COA** — CRUD nguyên liệu, upload
-> file/thư mục COA, import CSV nguyên liệu, export COA theo CSV, định dạng ngày COA `dd/mm/yyyy`.
+> Cập nhật lần cuối: phiên tinh chỉnh **hóa đơn & UI** — phân trang hóa đơn phía server
+> (`list_invoices` → `Paged`), bỏ lọc `ttxly==5` (lấy MỌI trạng thái), form FLOOR nhập `dd/mm/yyyy`,
+> nav-header breadcrumb động + sidebar active theo route, mở file COA chưa lưu bằng app ngoài
+> (`open_bytes_external`). (Trước đó: hệ Nguyên liệu + COA.)
 > Nếu bạn sửa tiếp, cập nhật lại phần **Trạng thái** và **Việc còn dang dở** bên dưới.
 
 ---
@@ -77,6 +79,11 @@ Cây route:
 - `/_protected/coas` (danh sách nguyên liệu) và `/_protected/coas_/$id` (chi tiết — dấu `_` để
   **un-nest** khỏi layout danh sách; xem mục 6.5).
 
+Điều hướng: [nav-header.tsx](apps/invoice-desktop/src/components/nav-header.tsx) breadcrumb **động** theo
+`useMatches()` (map `routeId`→nhãn); [nav-main.tsx](apps/invoice-desktop/src/components/nav-main.tsx)
+sidebar **active theo route** (`useRouterState` pathname, `/coas` active cả ở `/coas/$id`) — không còn
+hardcode `isActive`.
+
 ---
 
 ## 3. Luồng auth + token
@@ -107,21 +114,24 @@ Cây route:
 - `ensure_token` dùng `valid_cached_token`; upsert idempotent theo `id`.
 - Emit `sync://progress` / `sync://error` (Tauri event).
 - API: `GET /api/query/invoices/purchase`, params `sort=tdlap:desc`, `size=50`,
-  `search=tdlap=ge=<dd/MM/yyyyTHH:mm:ss>;tdlap=le=<...>;ttxly==5`, phân trang bằng cursor `state`.
+  `search=tdlap=ge=<dd/MM/yyyyTHH:mm:ss>;tdlap=le=<...>`, phân trang bằng cursor `state`.
   Response `{datas, total, state, time}`; hết khi `datas` rỗng hoặc `state` rỗng.
+  **Lấy MỌI trạng thái** — đã **bỏ** lọc `ttxly==5` (trước chỉ lấy hóa đơn đã xử lý xong).
 
 ---
 
 ## 5. Tauri commands (đã đăng ký ở `invoke_handler`)
 
 Auth/sync/hóa đơn: `login`, `logout`, `profile`, `set_credentials`, `clear_credentials`,
-`has_credentials`, `get_sync_status`, `list_invoices(filter)`, `get_floor`, `set_floor(date)`.
+`has_credentials`, `get_sync_status`, `list_invoices(filter)` **→ `Paged<Invoice>`** (phân trang server:
+`filter.limit`/`filter.offset` + `count_invoices`), `get_floor`, `set_floor(date)` (date = ISO `yyyy-MM-dd`).
 
 Nguyên liệu: `get_raw_material_by_id`, `list_raw_materials(filter)`, `create_raw_material`,
 `update_raw_material`, `import_raw_materials(csv_bytes)`.
 
-COA: `list_coas`, `create_coa`, `create_coas_bulk`, `read_coa_file`, `open_coa_file`, `delete_coa`,
-`download_coas(ids, base_name)`, `download_coas_from_csv(csv_bytes, base_name)`.
+COA: `list_coas`, `create_coa`, `create_coas_bulk`, `read_coa_file`, `open_coa_file`,
+`open_bytes_external(file_name, file_bytes)` (ghi file tạm + mở app ngoài — xem COA CHƯA lưu),
+`delete_coa`, `download_coas(ids, base_name)`, `download_coas_from_csv(csv_bytes, base_name)`.
 
 ---
 
@@ -133,6 +143,9 @@ tgtttbso(f64), tlhdon, ttcktmai(f64), tthai(u8), ttxly(u8), ntao(String ISO), nm
 - **Ngày dùng `ntao`** (ngày tạo) — là cột dùng để ORDER BY / lọc from-to / prune theo FLOOR
   (ISO so sánh chuỗi vẫn đúng thứ tự). Server vẫn lọc theo `tdlap`.
 - Tiền để `f64`. Bảng SQLite ([libs/store/src/lib.rs](libs/store/src/lib.rs)) khớp field này.
+- **`InvoiceFilter`** = `{kind, from, to, limit, offset}`. `list_invoices` phân trang phía server:
+  trả `Paged<Invoice> {data, total}` (`query` limit/offset + `count_invoices`). Trang purchase dùng
+  `DataTable` manualPagination (mặc định 50 dòng, đổi số dòng → về trang 1).
 
 ---
 
@@ -147,10 +160,13 @@ Quản lý nguyên liệu thô + phiếu kiểm nghiệm (COA — Certificate of
 - **File COA trên đĩa**: lưu `app_data_dir/coa/<uuidv7>.<ext>` (cạnh SQLite); DB chỉ giữ **path tương
   đối** (portable). Xem trước trong app qua blob URL ([coa_viewer_sheet.tsx](apps/invoice-desktop/src/components/coa_viewer_sheet.tsx));
   xoá mềm COA ⇒ **xoá luôn file** (best-effort).
-- **Định dạng ngày COA = `dd/mm/yyyy`** (hỗ trợ chỉ `mm/yyyy` cho COA không rõ ngày). Helper
-  [lib/date.ts](apps/invoice-desktop/src/lib/date.ts) (`isVnDate`, `formatVnDate`). Nhập bằng text
-  (không dùng `type=date`). ⚠️ **Cố ý KHÔNG đổi** ngày hóa đơn `ntao` và `floor` (dính logic
-  sync/prune + `set_floor` parse `%Y-%m-%d`) — chỉ đổi ngày của COA.
+- **Định dạng ngày `dd/mm/yyyy`** cho ngày COA (hỗ trợ chỉ `mm/yyyy` cho COA không rõ ngày) **và cho
+  FORM nhập FLOOR**. Helper [lib/date.ts](apps/invoice-desktop/src/lib/date.ts): `isVnDate`,
+  `formatVnDate` (ISO→dd/mm/yyyy để hiển thị), `vnDateToIso` (dd/mm/yyyy→ISO khi submit). Nhập bằng
+  text (không `type=date`). ⚠️ **Lưu trữ `ntao` và `floor` VẪN ISO `yyyy-MM-dd`** (dính sync/prune +
+  `set_floor` parse `%Y-%m-%d`); chỉ **biên form** đổi qua lại dd/mm/yyyy↔ISO. Form FLOOR ở
+  [login-dialog.tsx](apps/invoice-desktop/src/components/login-dialog.tsx) (prefill `get_floor` →
+  `formatVnDate`) và trang purchase.
 - **Thêm COA**: từng file ([coa_dialog.tsx](apps/invoice-desktop/src/components/coa_dialog.tsx)) hoặc
   **cả thư mục** ([coa_bulk_dialog.tsx](apps/invoice-desktop/src/components/coa_bulk_dialog.tsx) dùng
   `<input webkitdirectory>` → nhập số lô/ngày từng file → `create_coas_bulk`).
@@ -180,9 +196,9 @@ Quản lý nguyên liệu thô + phiếu kiểm nghiệm (COA — Certificate of
 - **Migration DB**: đã đổi cột bảng `invoices`. File `invoices.db` cũ KHÔNG tương thích →
   **xóa `%APPDATA%/com.thanhnhut.invoice-desktop/invoices.db`** trước khi chạy (máy này đã xóa;
   máy khác DB tạo mới tự động nên không cần).
-- **Lỗi TS6133 tồn sẵn** ở `contexts/sync-context.tsx`, `hooks/use-online.ts`,
-  `lookups/invoice/purchase.tsx` (import/biến thừa) → chặn `pnpm build` (tsc) nhưng **KHÔNG** chặn
-  `pnpm tauri dev`. Dọn khi rảnh (không phát sinh từ hệ nguyên liệu/COA).
+- **Lỗi TS6133 tồn sẵn** ở `contexts/sync-context.tsx`, `hooks/use-online.ts` (import/biến thừa) →
+  chặn `pnpm build` (tsc) nhưng **KHÔNG** chặn `pnpm tauri dev`. (`purchase.tsx` đã sạch sau khi làm
+  phân trang.) Dọn khi rảnh.
 - **Ngày COA cũ dạng ISO**: COA nào lỡ nhập trước khi đổi định dạng (bằng `type=date`) đang lưu ISO
   trong DB — vẫn **hiển thị & khớp export đúng** nhờ chuẩn hoá (`formatVnDate`/`dates_match`); chưa
   migrate chuỗi ISO→`dd/mm/yyyy` trong DB (để ngỏ, làm khi cần).
@@ -202,7 +218,7 @@ pnpm tauri dev
 
 # Backend
 cargo build --workspace
-cargo test -p hddt -p store            # hddt 9, store 13 (KHÔNG cần mạng)
+cargo test -p hddt -p store            # hddt 9, store 14 (KHÔNG cần mạng)
 cargo test -p invoice-desktop          # unit test: is_valid_code, parse_flex_date, dates_match, sync
 
 # Sinh lại route khi thêm/sửa file trong src/routes (nếu dev server không chạy)

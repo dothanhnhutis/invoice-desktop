@@ -158,6 +158,9 @@ export const api = {
     call<CoaBulkResult>("create_coas_bulk", { payloads }),
   readCoaFile: (path: string) => call<number[]>("read_coa_file", { path }),
   openCoaFile: (path: string) => call<void>("open_coa_file", { path }),
+  /** Mở 1 file (bytes, chưa lưu) bằng app ngoài để xem trước. */
+  openBytesExternal: (fileName: string, fileBytes: number[]) =>
+    call<void>("open_bytes_external", { fileName, fileBytes }),
   deleteCoa: (id: number) => call<void>("delete_coa", { id }),
   /** Tải các COA đã chọn về Downloads (1 file: copy; nhiều: .zip). Trả đường dẫn kết quả. */
   downloadCoas: (ids: number[], baseName?: string) =>

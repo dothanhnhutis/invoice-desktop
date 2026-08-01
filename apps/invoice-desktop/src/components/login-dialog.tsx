@@ -15,11 +15,14 @@ import { useForm } from "@tanstack/react-form";
 import { invoke } from "@tauri-apps/api/core";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "./ui/input";
+import { formatVnDate, vnDateToIso } from "@/lib/date";
 
 const formSchema = z.object({
   username: z.string().min(1, "Bắt buộc"),
   password: z.string().min(1, "Bắt buộc"),
-  floor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày dạng YYYY-MM-DD"),
+  floor: z
+    .string()
+    .refine((v) => vnDateToIso(v) !== null, "Ngày dạng dd/mm/yyyy"),
 });
 
 export type LoginForm = z.infer<typeof formSchema>;
@@ -46,7 +49,8 @@ const LoginDialog = () => {
           password: value.password,
         });
         // 2) Chỉ khi login OK mới đặt FLOOR rồi lưu credential (set_credentials kích sync).
-        await invoke("set_floor", { date: value.floor });
+        // FLOOR lưu ISO; form nhập dd/mm/yyyy nên đổi trước khi gửi.
+        await invoke("set_floor", { date: vnDateToIso(value.floor)! });
         await invoke("set_credentials", {
           username: value.username,
           password: value.password,
@@ -64,7 +68,7 @@ const LoginDialog = () => {
     // Prefill FLOOR đã lưu (nếu có).
     invoke<string>("get_floor")
       .then((v) => {
-        if (v) form.setFieldValue("floor", v);
+        if (v) form.setFieldValue("floor", formatVnDate(v)); // ISO -> dd/mm/yyyy
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -152,7 +156,7 @@ const LoginDialog = () => {
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    type="date"
+                    placeholder="dd/mm/yyyy"
                     required
                   />
                 </Field>

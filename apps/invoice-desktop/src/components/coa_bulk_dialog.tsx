@@ -86,6 +86,16 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
   const removeRow = (i: number) =>
     setRows((prev) => prev.filter((_, idx) => idx !== i));
 
+  // Mở file (chưa lưu) bằng app ngoài để xem trước: ghi bytes ra file tạm rồi mở.
+  const openFile = async (file: File) => {
+    try {
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      await api.openBytesExternal(file.name, bytes);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    }
+  };
+
   const reset = () => {
     setRows([]);
     if (inputRef.current) inputRef.current.value = "";
@@ -217,11 +227,14 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
                 <TableBody>
                   {rows.map((r, i) => (
                     <TableRow key={i}>
-                      <TableCell
-                        className="max-w-[220px] truncate"
-                        title={r.file.name}
-                      >
-                        {r.file.name}
+                      <TableCell className="max-w-[220px]" title={r.file.name}>
+                        <button
+                          type="button"
+                          className="block max-w-full truncate text-left text-primary underline-offset-2 hover:underline"
+                          onClick={() => openFile(r.file)}
+                        >
+                          {r.file.name}
+                        </button>
                       </TableCell>
                       <TableCell>
                         <Input

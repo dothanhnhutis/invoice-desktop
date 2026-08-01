@@ -28,7 +28,6 @@ const navMain: (NavLinkType | NavLinkGroup)[] = [
         title: "Tra cứu hoá đơn",
         items: [
           {
-            isActive: true,
             icon: BanknoteArrowUpIcon,
             title: "Đầu ra",
             url: "/lookups/invoice/sold",

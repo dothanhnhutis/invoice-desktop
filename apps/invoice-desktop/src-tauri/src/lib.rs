@@ -110,13 +110,15 @@ fn get_sync_status(state: State<'_, AppState>) -> Result<SyncState, String> {
     state.db.get_sync_state().map_err(|e| e.to_string())
 }
 
-/// Truy vấn hóa đơn từ DB cục bộ (không gọi server).
+/// Truy vấn hóa đơn từ DB cục bộ (không gọi server). Phân trang phía server: trả 1 trang + tổng số.
 #[tauri::command]
 fn list_invoices(
     state: State<'_, AppState>,
     filter: InvoiceFilter,
-) -> Result<Vec<Invoice>, String> {
-    state.db.query(&filter).map_err(|e| e.to_string())
+) -> Result<Paged<Invoice>, String> {
+    let total = state.db.count_invoices(&filter).map_err(|e| e.to_string())?;
+    let data = state.db.query(&filter).map_err(|e| e.to_string())?;
+    Ok(Paged { data, total })
 }
 
 /// Danh sách nguyên liệu (lọc theo `q`, phân trang phía server: trả 1 trang + tổng số).
@@ -438,6 +440,30 @@ fn open_coa_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join(path);
+    app.opener()
+        .open_path(abs.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| e.to_string())
+}
+
+/// Ghi bytes ra file tạm (giữ tên gốc để app ngoài nhận đúng đuôi) rồi mở bằng app mặc định OS.
+/// Dùng để xem trước file COA CHƯA lưu (chọn từ thư mục).
+#[tauri::command]
+fn open_bytes_external(
+    app: tauri::AppHandle,
+    file_name: String,
+    file_bytes: Vec<u8>,
+) -> Result<(), String> {
+    // Thư mục con uuid riêng mỗi lần mở → không đụng tên / khoá file khi mở nhiều file trùng tên.
+    let dir = app
+        .path()
+        .temp_dir()
+        .map_err(|e| e.to_string())?
+        .join("invoice-desktop")
+        .join("coa-preview")
+        .join(uuid::Uuid::now_v7().to_string());
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let abs = dir.join(sanitize_filename(&file_name)); // giữ tên + đuôi gốc
+    std::fs::write(&abs, &file_bytes).map_err(|e| e.to_string())?;
     app.opener()
         .open_path(abs.to_string_lossy().to_string(), None::<String>)
         .map_err(|e| e.to_string())
@@ -950,6 +976,7 @@ pub fn run() {
             create_coas_bulk,
             read_coa_file,
             open_coa_file,
+            open_bytes_external,
             delete_coa,
             download_coas,
             download_coas_from_csv,

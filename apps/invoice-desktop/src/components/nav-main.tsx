@@ -13,11 +13,10 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
 } from "@/components/ui/sidebar";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 
 export type NavLinkType = {
   icon?: LucideIcon;
-  isActive?: boolean;
   title: string;
   url: string;
 };
@@ -26,11 +25,33 @@ export type NavLinkGroup = Omit<NavLinkType, "url"> & {
   items: (NavLinkType | NavLinkGroup)[];
 };
 
-function Tree({ item }: { item: NavLinkType | NavLinkGroup }) {
+/** Mục lá active khi route hiện tại khớp `url` (kể cả route con, vd /coas active ở /coas/$id). */
+function isLeafActive(url: string, pathname: string) {
+  if (!url || url === "#") return false;
+  return pathname === url || pathname.startsWith(url + "/");
+}
+
+/** Nhóm/mục có chứa trang đang xem không (đệ quy). */
+function hasActive(
+  item: NavLinkType | NavLinkGroup,
+  pathname: string,
+): boolean {
+  return "items" in item
+    ? item.items.some((c) => hasActive(c, pathname))
+    : isLeafActive(item.url, pathname);
+}
+
+function Tree({
+  item,
+  pathname,
+}: {
+  item: NavLinkType | NavLinkGroup;
+  pathname: string;
+}) {
   if (!("items" in item)) {
     return (
       <SidebarMenuButton
-        isActive={item.isActive}
+        isActive={isLeafActive(item.url, pathname)}
         className="data-[active=true]:bg-transparent"
         render={<Link to={item.url} />}
       >
@@ -43,7 +64,7 @@ function Tree({ item }: { item: NavLinkType | NavLinkGroup }) {
     <Collapsible
       key={item.title}
       render={<SidebarMenuItem />}
-      defaultOpen={item.isActive}
+      defaultOpen={hasActive(item, pathname)}
       className="group/collapsible"
     >
       <CollapsibleTrigger render={<SidebarMenuButton tooltip={item.title} />}>
@@ -54,7 +75,7 @@ function Tree({ item }: { item: NavLinkType | NavLinkGroup }) {
       <CollapsibleContent>
         <SidebarMenuSub className="mr-0 pr-0">
           {item.items.map((subItem, index) => (
-            <Tree key={index} item={subItem} />
+            <Tree key={index} item={subItem} pathname={pathname} />
           ))}
         </SidebarMenuSub>
       </CollapsibleContent>
@@ -63,12 +84,13 @@ function Tree({ item }: { item: NavLinkType | NavLinkGroup }) {
 }
 
 export function NavMain({ items }: { items: (NavLinkType | NavLinkGroup)[] }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Platform</SidebarGroupLabel>
       <SidebarMenu>
         {items.map((item) => (
-          <Tree key={item.title} item={item} />
+          <Tree key={item.title} item={item} pathname={pathname} />
         ))}
       </SidebarMenu>
     </SidebarGroup>

@@ -189,6 +189,11 @@ impl Db {
         if let Some(limit) = filter.limit {
             sql.push_str(" LIMIT ?");
             args.push(Box::new(limit as i64));
+            // OFFSET chỉ hợp lệ khi đi kèm LIMIT (ràng buộc của SQLite).
+            if let Some(offset) = filter.offset {
+                sql.push_str(" OFFSET ?");
+                args.push(Box::new(offset as i64));
+            }
         }
 
         let conn = self.conn.lock().unwrap();
@@ -196,6 +201,29 @@ impl Db {
         let param_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), row_to_invoice)?;
         rows.collect()
+    }
+
+    /// Đếm tổng số hóa đơn khớp bộ lọc `kind`/`from`/`to` (bỏ qua limit/offset).
+    pub fn count_invoices(&self, filter: &InvoiceFilter) -> Result<i64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM invoices WHERE 1=1");
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(kind) = filter.kind {
+            sql.push_str(" AND kind = ?");
+            args.push(Box::new(kind.as_str().to_string()));
+        }
+        if let Some(from) = &filter.from {
+            sql.push_str(" AND ntao >= ?");
+            args.push(Box::new(from.clone()));
+        }
+        if let Some(to) = &filter.to {
+            sql.push_str(" AND ntao <= ?");
+            args.push(Box::new(to.clone()));
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+        conn.query_row(&sql, param_refs.as_slice(), |r| r.get(0))
     }
 
     pub fn get_sync_state(&self) -> Result<SyncState> {
@@ -626,6 +654,58 @@ mod tests {
         assert_eq!(
             all.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
             vec!["c", "b", "a"]
+        );
+    }
+
+    #[test]
+    fn query_paginates_and_counts_invoices() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_invoices(&[
+            inv("a", "2026-01-01", 1.0),
+            inv("b", "2026-02-01", 2.0),
+            inv("c", "2026-03-01", 3.0),
+        ])
+        .unwrap();
+
+        // Trang đầu (limit=2, offset=0) -> 2 dòng, mới nhất trước (ntao desc).
+        let page1 = db
+            .query(&InvoiceFilter {
+                limit: Some(2),
+                offset: Some(0),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page1.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["c", "b"]);
+
+        // Trang 2 (offset=2) -> 1 dòng còn lại.
+        let page2 = db
+            .query(&InvoiceFilter {
+                limit: Some(2),
+                offset: Some(2),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page2.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["a"]);
+
+        // count_invoices bỏ qua limit/offset.
+        assert_eq!(
+            db.count_invoices(&InvoiceFilter {
+                limit: Some(2),
+                offset: Some(0),
+                ..Default::default()
+            })
+            .unwrap(),
+            3
+        );
+        // count có lọc khoảng ngày.
+        assert_eq!(
+            db.count_invoices(&InvoiceFilter {
+                from: Some("2026-01-15".into()),
+                to: Some("2026-02-15".into()),
+                ..Default::default()
+            })
+            .unwrap(),
+            1
         );
     }
 

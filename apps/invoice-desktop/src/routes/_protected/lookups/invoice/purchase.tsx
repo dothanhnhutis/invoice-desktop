@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
@@ -8,20 +8,20 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group";
-import { CalendarSyncIcon, CheckIcon } from "lucide-react";
+import { CalendarSyncIcon } from "lucide-react";
 import { Button } from "@base-ui/react";
 import * as z from "zod";
 import { useForm } from "@tanstack/react-form";
 import { Spinner } from "@/components/ui/spinner";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, OnChangeFn, PaginationState } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
-import { TableHead } from "@/components/ui/table";
+import { vnDateToIso } from "@/lib/date";
 
 export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
   component: RouteComponent,
 });
 
-const PAGE_SIZE = 50;
+type Paged<T> = { data: T[]; total: number };
 
 // Khớp domain::Invoice (field thô GDT).
 type Invoice = {
@@ -186,20 +186,29 @@ type SyncState = {
 };
 
 const formSchema = z.object({
-  floor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày dạng YYYY-MM-DD"),
+  floor: z
+    .string()
+    .refine((v) => vnDateToIso(v) !== null, "Ngày dạng dd/mm/yyyy"),
 });
 
 function RouteComponent() {
   const { progress, error } = useSync(); // tiến độ/lỗi realtime (listener toàn cục ở __root)
-  const [page, setPage] = useState(0);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 50,
+  });
 
   const invoices = useQuery({
-    queryKey: ["invoices"],
-    queryFn: async () => {
-      // Lấy toàn bộ hóa đơn đã đồng bộ; phân trang hiển thị ở client.
-      const data = await invoke<Invoice[]>("list_invoices", { filter: {} });
-      return data;
-    },
+    queryKey: ["invoices", pagination.pageIndex, pagination.pageSize],
+    // Phân trang phía server: chỉ tải đúng 1 trang + tổng số.
+    queryFn: async () =>
+      invoke<Paged<Invoice>>("list_invoices", {
+        filter: {
+          limit: pagination.pageSize,
+          offset: pagination.pageIndex * pagination.pageSize,
+        },
+      }),
+    placeholderData: keepPreviousData,
     refetchInterval: 3000,
   });
 
@@ -218,21 +227,31 @@ function RouteComponent() {
     },
     onSubmit: async ({ value }) => {
       try {
-        await invoke("set_floor", { date: value.floor });
+        // FLOOR lưu ISO; form nhập dd/mm/yyyy nên đổi trước khi gửi.
+        await invoke("set_floor", { date: vnDateToIso(value.floor)! });
       } catch (e) {
         console.log(e);
       }
     },
   });
 
-  const rows = invoices.data ?? [];
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const pageRows = rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const total = invoices.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pagination.pageSize));
 
-  // Kẹp trang khi dữ liệu co lại (vd sau prune) để không hiện trang trống.
+  // Đổi số dòng/trang -> về trang đầu.
+  const onPaginationChange: OnChangeFn<PaginationState> = (updater) => {
+    setPagination((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      return next.pageSize !== prev.pageSize ? { ...next, pageIndex: 0 } : next;
+    });
+  };
+
+  // Kẹp trang khi tổng co lại (vd sau prune) để không hiện trang trống.
   useEffect(() => {
-    if (page > pageCount - 1) setPage(pageCount - 1);
-  }, [pageCount, page]);
+    if (pagination.pageIndex > pageCount - 1) {
+      setPagination((p) => ({ ...p, pageIndex: pageCount - 1 }));
+    }
+  }, [pageCount, pagination.pageIndex]);
 
   const lastSync = sync.data?.last_sync_at
     ? new Date(sync.data.last_sync_at * 1000).toLocaleString()
@@ -264,8 +283,8 @@ function RouteComponent() {
           </p>
           <p>Đồng bộ gần nhất: {lastSync}</p>
           <p>
-            Tổng: <b>{rows.length}</b> hóa đơn · trang{" "}
-            <b>{Math.min(page + 1, pageCount)}</b>/{pageCount}
+            Tổng: <b>{total}</b> hóa đơn · trang{" "}
+            <b>{Math.min(pagination.pageIndex + 1, pageCount)}</b>/{pageCount}
           </p>
           {invoices.isError && (
             <p className="text-red-500">
@@ -291,9 +310,8 @@ function RouteComponent() {
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    type="date"
                     required
-                    placeholder="Ngày đồng bộ ngược"
+                    placeholder="dd/mm/yyyy"
                   />
                 );
               }}
@@ -318,27 +336,14 @@ function RouteComponent() {
             </InputGroupAddon>
           </InputGroup>
         </form>
-        <DataTable type="fixed" columns={columns} data={invoices.data ?? []} />
-
-        <div className="flex items-center justify-between text-sm">
-          <button
-            className="rounded-md border px-3 py-1 disabled:opacity-40"
-            disabled={page <= 0}
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-          >
-            ← Trước
-          </button>
-          <span className="text-muted-foreground">
-            Trang {Math.min(page + 1, pageCount)}/{pageCount}
-          </span>
-          <button
-            className="rounded-md border px-3 py-1 disabled:opacity-40"
-            disabled={page >= pageCount - 1}
-            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-          >
-            Sau →
-          </button>
-        </div>
+        <DataTable
+          type="fixed"
+          columns={columns}
+          data={invoices.data?.data ?? []}
+          pagination={pagination}
+          onPaginationChange={onPaginationChange}
+          pageCount={pageCount}
+        />
       </div>
     </div>
   );

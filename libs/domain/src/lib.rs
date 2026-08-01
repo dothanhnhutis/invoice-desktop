@@ -88,6 +88,8 @@ pub struct InvoiceFilter {
     pub from: Option<String>,
     pub to: Option<String>,
     pub limit: Option<u32>,
+    /// Bỏ qua bao nhiêu dòng (phân trang; chỉ áp dụng khi có `limit`).
+    pub offset: Option<u32>,
 }
 
 /// Nguyên liệu (nguyên liệu thô). Một nguyên liệu có nhiều COA.

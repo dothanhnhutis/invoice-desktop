@@ -17,6 +17,15 @@ export function isVnDate(s: string): boolean {
   return false;
 }
 
+/** dd/mm/yyyy -> yyyy-mm-dd (ISO). null nếu không phải ngày dd/mm/yyyy hợp lệ. */
+export function vnDateToIso(s: string): string | null {
+  const m = s.trim().match(DMY);
+  if (!m) return null;
+  const [, dd, mm, yyyy] = m;
+  if (!validDay(+dd) || !validMonth(+mm)) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 /**
  * Hiển thị ngày COA dạng dd/mm/yyyy (hoặc mm/yyyy). Dữ liệu cũ lưu ISO (yyyy-mm-dd / yyyy-mm)
  * sẽ được đổi sang cho đồng nhất. Rỗng/null → "-".

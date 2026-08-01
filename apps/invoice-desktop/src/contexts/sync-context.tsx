@@ -44,17 +44,17 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // useEffect(() => {
-  //   const unlisteners: UnlistenFn[] = [];
-  //   listen<SyncProgress>("sync://progress", (e) => {
-  //     setProgress(e.payload);
-  //     setError(null);
-  //   }).then((u) => unlisteners.push(u));
-  //   listen<string>("sync://error", (e) => setError(e.payload)).then((u) =>
-  //     unlisteners.push(u),
-  //   );
-  //   return () => unlisteners.forEach((u) => u());
-  // }, []);
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+    listen<SyncProgress>("sync://progress", (e) => {
+      setProgress(e.payload);
+      setError(null);
+    }).then((u) => unlisteners.push(u));
+    listen<string>("sync://error", (e) => setError(e.payload)).then((u) =>
+      unlisteners.push(u),
+    );
+    return () => unlisteners.forEach((u) => u());
+  }, []);
 
   const contextValue = useMemo<SyncContextValue>(() => {
     return {

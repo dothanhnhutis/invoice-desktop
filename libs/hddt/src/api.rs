@@ -49,7 +49,7 @@ struct RawPage {
 
 /// Lấy 1 trang hóa đơn MUA VÀO trong khoảng ngày `[from, to]` (định dạng
 /// `dd/MM/yyyyTHH:mm:ss`). `state` = cursor trang kế (None cho trang đầu).
-/// Chỉ lấy hóa đơn đã xử lý xong (`ttxly==5`).
+/// Lấy TẤT CẢ trạng thái xử lý (không lọc `ttxly`).
 pub async fn query_purchase(
     client: &Client,
     token: &str,
@@ -57,7 +57,7 @@ pub async fn query_purchase(
     to: &str,
     state: Option<&str>,
 ) -> Result<Page, QueryError> {
-    let search = format!("tdlap=ge={from};tdlap=le={to};ttxly==5");
+    let search = format!("tdlap=ge={from};tdlap=le={to}");
     let mut params: Vec<(&str, String)> = vec![
         ("sort", "tdlap:desc".into()),
         ("size", SIZE.to_string()),
