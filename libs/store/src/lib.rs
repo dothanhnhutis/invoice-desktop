@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS invoices (
     nmten       TEXT NOT NULL,
     nmmst       TEXT NOT NULL,
     nmdchi      TEXT NOT NULL,
-    raw_json    TEXT NOT NULL
+    raw_json    TEXT NOT NULL,
+    qrcode      TEXT,
+    hdhhdvu     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_invoices_ntao ON invoices(ntao);
 CREATE INDEX IF NOT EXISTS idx_invoices_kind ON invoices(kind);
@@ -108,9 +110,30 @@ impl Db {
         // PRAGMA đặt theo connection; Db giữ 1 connection nên đặt một lần là đủ.
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         conn.execute_batch(SCHEMA)?;
+        // Migrate DB cũ: `CREATE TABLE IF NOT EXISTS` không thêm cột mới, và SQLite
+        // không có `ADD COLUMN IF NOT EXISTS` -> tự kiểm tra rồi ALTER (idempotent).
+        Self::add_column_if_missing(&conn, "invoices", "qrcode", "TEXT")?;
+        Self::add_column_if_missing(&conn, "invoices", "hdhhdvu", "TEXT")?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Thêm cột vào bảng nếu chưa tồn tại (dựa trên `PRAGMA table_info`).
+    fn add_column_if_missing(
+        conn: &Connection,
+        table: &str,
+        column: &str,
+        decl: &str,
+    ) -> Result<()> {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let existing: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<Result<_>>()?;
+        if !existing.iter().any(|c| c == column) {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
+        }
+        Ok(())
     }
 
     /// Chèn/cập nhật một batch hóa đơn (idempotent theo `id`).
@@ -168,7 +191,7 @@ impl Db {
         let mut sql = String::from(
             "SELECT id, kind, nbmst, khmshdon, khhdon, shdon, dvtte, nbdchi, nbten, \
              tgtcthue, tgtthue, tgtttbso, tlhdon, ttcktmai, tthai, ttxly, ntao, \
-             nmten, nmmst, nmdchi, raw_json \
+             nmten, nmmst, nmdchi, raw_json, qrcode, hdhhdvu \
              FROM invoices WHERE 1=1",
         );
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -201,6 +224,31 @@ impl Db {
         let param_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), row_to_invoice)?;
         rows.collect()
+    }
+
+    /// Lấy 1 hóa đơn theo `id` (None nếu không tồn tại).
+    pub fn get_invoice(&self, id: &str) -> Result<Option<Invoice>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, kind, nbmst, khmshdon, khhdon, shdon, dvtte, nbdchi, nbten, \
+             tgtcthue, tgtthue, tgtttbso, tlhdon, ttcktmai, tthai, ttxly, ntao, \
+             nmten, nmmst, nmdchi, raw_json, qrcode, hdhhdvu \
+             FROM invoices WHERE id = ?1",
+            [id],
+            row_to_invoice,
+        )
+        .optional()
+    }
+
+    /// Ghi chi tiết lazy-load (`qrcode` + `hdhhdvu` JSON thô) cho 1 hóa đơn.
+    /// Chỉ đụng 2 cột này nên sync sau đó (upsert) không xoá mất.
+    pub fn set_invoice_detail(&self, id: &str, qrcode: &str, hdhhdvu: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE invoices SET qrcode = ?1, hdhhdvu = ?2 WHERE id = ?3",
+            params![qrcode, hdhhdvu, id],
+        )?;
+        Ok(())
     }
 
     /// Đếm tổng số hóa đơn khớp bộ lọc `kind`/`from`/`to` (bỏ qua limit/offset).
@@ -555,6 +603,8 @@ fn row_to_invoice(r: &rusqlite::Row) -> Result<Invoice> {
         nmmst: r.get(18)?,
         nmdchi: r.get(19)?,
         raw_json: r.get(20)?,
+        qrcode: r.get(21)?,
+        hdhhdvu: r.get(22)?,
     })
 }
 
@@ -612,6 +662,8 @@ mod tests {
             nmmst: "0202".into(),
             nmdchi: "".into(),
             raw_json: "{}".into(),
+            qrcode: None,
+            hdhhdvu: None,
         }
     }
 
@@ -628,6 +680,38 @@ mod tests {
         let all = db.query(&InvoiceFilter::default()).unwrap();
         let a = all.iter().find(|i| i.id == "a").unwrap();
         assert_eq!(a.tgtttbso, 150.0);
+    }
+
+    #[test]
+    fn get_invoice_and_set_detail_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_invoices(&[inv("a", "2026-01-01", 100.0)]).unwrap();
+
+        // Mới insert -> chưa có chi tiết.
+        let got = db.get_invoice("a").unwrap().unwrap();
+        assert_eq!(got.qrcode, None);
+        assert_eq!(got.hdhhdvu, None);
+        assert!(db.get_invoice("missing").unwrap().is_none());
+
+        db.set_invoice_detail("a", "QR-DATA", "[{\"ten\":\"x\"}]")
+            .unwrap();
+        let got = db.get_invoice("a").unwrap().unwrap();
+        assert_eq!(got.qrcode.as_deref(), Some("QR-DATA"));
+        assert_eq!(got.hdhhdvu.as_deref(), Some("[{\"ten\":\"x\"}]"));
+    }
+
+    #[test]
+    fn reupsert_preserves_cached_detail() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_invoices(&[inv("a", "2026-01-01", 100.0)]).unwrap();
+        db.set_invoice_detail("a", "QR-DATA", "[]").unwrap();
+
+        // Sync lại ghi đè header nhưng KHÔNG được xoá chi tiết đã lazy-load.
+        db.upsert_invoices(&[inv("a", "2026-01-01", 999.0)]).unwrap();
+        let got = db.get_invoice("a").unwrap().unwrap();
+        assert_eq!(got.tgtttbso, 999.0);
+        assert_eq!(got.qrcode.as_deref(), Some("QR-DATA"));
+        assert_eq!(got.hdhhdvu.as_deref(), Some("[]"));
     }
 
     #[test]

@@ -1,4 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+
+/** Mở hộp thoại chọn thư mục. Trả đường dẫn, hoặc null nếu người dùng huỷ. */
+export async function pickFolder(): Promise<string | null> {
+  const selected = await open({ directory: true, multiple: false });
+  return typeof selected === "string" ? selected : null;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -104,6 +111,64 @@ export type Coa = {
   updated_at: string;
 };
 
+// Khớp domain::Invoice (field thô GDT). `qrcode`/`hdhhdvu` null tới khi lazy-load chi tiết.
+export type Invoice = {
+  id: string;
+  kind: string;
+  nbmst: string;
+  khmshdon: number;
+  khhdon: string;
+  shdon: number;
+  dvtte: string;
+  nbdchi: string;
+  nbten: string;
+  tgtcthue: number;
+  tgtthue: number;
+  tgtttbso: number;
+  tlhdon: string;
+  ttcktmai: number;
+  tthai: number;
+  ttxly: number;
+  ntao: string;
+  nmten: string;
+  nmmst: string;
+  nmdchi: string;
+  raw_json: string;
+  qrcode: string | null;
+  hdhhdvu: string | null; // JSON thô, cần JSON.parse thành InvoiceLine[]
+};
+
+// Trường phụ mỗi dòng hàng (Số lô, Hạn dùng, Ghi chú dòng...).
+export type InvoiceLineExtra = {
+  ttruong: string;
+  kdlieu: string;
+  dlieu: string | null;
+};
+
+// 1 phần tử của `hdhhdvu` sau JSON.parse.
+export type InvoiceLine = {
+  stt: number;
+  ten: string;
+  dvtinh: string | null;
+  sluong: number | null;
+  dgia: number | null;
+  thtien: number | null;
+  ltsuat: string | null;
+  ttkhac: InvoiceLineExtra[] | null;
+};
+
+export type InvoiceExportError = {
+  id: string;
+  label: string;
+  reason: string;
+};
+
+export type ExportInvoiceResult = {
+  downloaded: number;
+  dir: string;
+  errors: InvoiceExportError[];
+};
+
 export type ImportResult = {
   created: number;
   duplicates: string[];
@@ -131,6 +196,12 @@ export type ExportResult = {
 };
 
 export const api = {
+  /** Lấy chi tiết 1 hóa đơn (lazy-load qrcode + hdhhdvu, cache ở DB). */
+  getInvoiceDetail: (id: string) =>
+    call<Invoice>("get_invoice_detail", { id }),
+  /** Tải hóa đơn (XML + PDF) về thư mục `dir`. Trả số tải được + lỗi từng hóa đơn. */
+  downloadInvoices: (ids: string[], dir: string) =>
+    call<ExportInvoiceResult>("download_invoices", { ids, dir }),
   listRawMaterials: (
     {
       q,

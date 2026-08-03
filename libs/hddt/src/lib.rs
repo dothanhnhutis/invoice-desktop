@@ -7,7 +7,7 @@ pub mod api;
 pub mod auth;
 pub mod client;
 
-pub use api::{Page, QueryError, profile, query_purchase};
+pub use api::{Page, QueryError, export_html, profile, query_detail, query_purchase};
 pub use auth::{AuthErr, LoginError, is_expired, login, token_expiry};
 pub use client::make_client;
 

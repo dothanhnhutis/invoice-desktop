@@ -22,6 +22,12 @@ function useTrail(): Crumb[] {
   switch (leaf?.routeId) {
     case "/_protected/lookups/invoice/purchase":
       return [{ label: "Tra cứu hoá đơn" }, { label: "Đầu vào" }];
+    case "/_protected/lookups/invoice/purchase_/$id":
+      return [
+        { label: "Tra cứu hoá đơn" },
+        { label: "Đầu vào", to: "/lookups/invoice/purchase" },
+        { label: "Chi tiết" },
+      ];
     case "/_protected/lookups/invoice/sold":
       return [{ label: "Tra cứu hoá đơn" }, { label: "Đầu ra" }];
     case "/_protected/coas":

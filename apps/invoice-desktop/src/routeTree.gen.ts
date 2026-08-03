@@ -15,6 +15,7 @@ import { Route as ProtectedCoasRouteImport } from './routes/_protected/coas'
 import { Route as ProtectedCoasIdRouteImport } from './routes/_protected/coas_.$id'
 import { Route as ProtectedLookupsInvoiceSoldRouteImport } from './routes/_protected/lookups/invoice/sold'
 import { Route as ProtectedLookupsInvoicePurchaseRouteImport } from './routes/_protected/lookups/invoice/purchase'
+import { Route as ProtectedLookupsInvoicePurchaseIdRouteImport } from './routes/_protected/lookups/invoice/purchase_.$id'
 
 const ProtectedRouteRoute = ProtectedRouteRouteImport.update({
   id: '/_protected',
@@ -47,6 +48,12 @@ const ProtectedLookupsInvoicePurchaseRoute =
     path: '/lookups/invoice/purchase',
     getParentRoute: () => ProtectedRouteRoute,
   } as any)
+const ProtectedLookupsInvoicePurchaseIdRoute =
+  ProtectedLookupsInvoicePurchaseIdRouteImport.update({
+    id: '/lookups/invoice/purchase_/$id',
+    path: '/lookups/invoice/purchase/$id',
+    getParentRoute: () => ProtectedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByFullPath {
   '/coas/$id': typeof ProtectedCoasIdRoute
   '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
+  '/lookups/invoice/purchase/$id': typeof ProtectedLookupsInvoicePurchaseIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -61,6 +69,7 @@ export interface FileRoutesByTo {
   '/coas/$id': typeof ProtectedCoasIdRoute
   '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
+  '/lookups/invoice/purchase/$id': typeof ProtectedLookupsInvoicePurchaseIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -70,6 +79,7 @@ export interface FileRoutesById {
   '/_protected/coas_/$id': typeof ProtectedCoasIdRoute
   '/_protected/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/_protected/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
+  '/_protected/lookups/invoice/purchase_/$id': typeof ProtectedLookupsInvoicePurchaseIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -79,6 +89,7 @@ export interface FileRouteTypes {
     | '/coas/$id'
     | '/lookups/invoice/purchase'
     | '/lookups/invoice/sold'
+    | '/lookups/invoice/purchase/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -86,6 +97,7 @@ export interface FileRouteTypes {
     | '/coas/$id'
     | '/lookups/invoice/purchase'
     | '/lookups/invoice/sold'
+    | '/lookups/invoice/purchase/$id'
   id:
     | '__root__'
     | '/'
@@ -94,6 +106,7 @@ export interface FileRouteTypes {
     | '/_protected/coas_/$id'
     | '/_protected/lookups/invoice/purchase'
     | '/_protected/lookups/invoice/sold'
+    | '/_protected/lookups/invoice/purchase_/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -145,6 +158,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedLookupsInvoicePurchaseRouteImport
       parentRoute: typeof ProtectedRouteRoute
     }
+    '/_protected/lookups/invoice/purchase_/$id': {
+      id: '/_protected/lookups/invoice/purchase_/$id'
+      path: '/lookups/invoice/purchase/$id'
+      fullPath: '/lookups/invoice/purchase/$id'
+      preLoaderRoute: typeof ProtectedLookupsInvoicePurchaseIdRouteImport
+      parentRoute: typeof ProtectedRouteRoute
+    }
   }
 }
 
@@ -153,6 +173,7 @@ interface ProtectedRouteRouteChildren {
   ProtectedCoasIdRoute: typeof ProtectedCoasIdRoute
   ProtectedLookupsInvoicePurchaseRoute: typeof ProtectedLookupsInvoicePurchaseRoute
   ProtectedLookupsInvoiceSoldRoute: typeof ProtectedLookupsInvoiceSoldRoute
+  ProtectedLookupsInvoicePurchaseIdRoute: typeof ProtectedLookupsInvoicePurchaseIdRoute
 }
 
 const ProtectedRouteRouteChildren: ProtectedRouteRouteChildren = {
@@ -160,6 +181,8 @@ const ProtectedRouteRouteChildren: ProtectedRouteRouteChildren = {
   ProtectedCoasIdRoute: ProtectedCoasIdRoute,
   ProtectedLookupsInvoicePurchaseRoute: ProtectedLookupsInvoicePurchaseRoute,
   ProtectedLookupsInvoiceSoldRoute: ProtectedLookupsInvoiceSoldRoute,
+  ProtectedLookupsInvoicePurchaseIdRoute:
+    ProtectedLookupsInvoicePurchaseIdRoute,
 }
 
 const ProtectedRouteRouteWithChildren = ProtectedRouteRoute._addFileChildren(

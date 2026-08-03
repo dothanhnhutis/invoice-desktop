@@ -122,6 +122,90 @@ pub async fn profile(client: &Client, token: &str) -> Result<serde_json::Value, 
         .map_err(|e| QueryError::Parse(e.to_string()))
 }
 
+/// Lấy CHI TIẾT 1 hóa đơn (gồm `qrcode` + mảng dòng hàng `hdhhdvu`).
+/// Trả JSON raw để caller tự trích field cần (không map sang struct).
+pub async fn query_detail(
+    client: &Client,
+    token: &str,
+    nbmst: &str,
+    khhdon: &str,
+    shdon: &str,
+    khmshdon: &str,
+) -> Result<serde_json::Value, QueryError> {
+    let url = reqwest::Url::parse_with_params(
+        &format!("{BASE}/api/query/invoices/detail"),
+        &[
+            ("nbmst", nbmst),
+            ("khhdon", khhdon),
+            ("shdon", shdon),
+            ("khmshdon", khmshdon),
+        ],
+    )
+    .map_err(|e| QueryError::Http(e.to_string()))?;
+
+    let resp = client
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| QueryError::Http(e.to_string()))?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(QueryError::Unauthorized);
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(QueryError::Http(format!("{status}: {body}")));
+    }
+    resp.json()
+        .await
+        .map_err(|e| QueryError::Parse(e.to_string()))
+}
+
+/// Tải bản thể hiện hóa đơn (ZIP gồm invoice.html/xml + asset) từ cổng GDT.
+/// Trả về nguyên bytes ZIP để caller tự giải nén.
+pub async fn export_html(
+    client: &Client,
+    token: &str,
+    nbmst: &str,
+    khhdon: &str,
+    shdon: &str,
+    khmshdon: &str,
+) -> Result<Vec<u8>, QueryError> {
+    let url = reqwest::Url::parse_with_params(
+        &format!("{BASE}/api/query/invoices/export-html"),
+        &[
+            ("nbmst", nbmst),
+            ("khhdon", khhdon),
+            ("shdon", shdon),
+            ("khmshdon", khmshdon),
+        ],
+    )
+    .map_err(|e| QueryError::Http(e.to_string()))?;
+
+    let resp = client
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| QueryError::Http(e.to_string()))?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(QueryError::Unauthorized);
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(QueryError::Http(format!("{status}: {body}")));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| QueryError::Http(e.to_string()))?;
+    Ok(bytes.to_vec())
+}
+
 /// Map 1 record JSON hóa đơn mua vào -> [`Invoice`]. Bỏ qua record thiếu `id`.
 fn map_purchase(v: &serde_json::Value) -> Option<Invoice> {
     let id = v.get("id")?.as_str()?.to_string();
@@ -152,6 +236,9 @@ fn map_purchase(v: &serde_json::Value) -> Option<Invoice> {
         nmmst: s("nmmst"),
         nmdchi: s("nmdchi"),
         raw_json: v.to_string(),
+        // Chi tiết (QR + dòng hàng) không có trong danh sách -> lazy-load qua `query_detail`.
+        qrcode: None,
+        hdhhdvu: None,
     })
 }
 

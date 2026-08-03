@@ -78,6 +78,12 @@ pub struct Invoice {
     pub nmdchi: String,
     /// Payload gốc (JSON) từ API.
     pub raw_json: String,
+    /// Chuỗi nội dung mã QR — null tới khi lazy-load chi tiết (API `/detail`).
+    #[serde(default)]
+    pub qrcode: Option<String>,
+    /// Mảng dòng hàng (JSON thô từ `hdhhdvu`) — null tới khi lazy-load chi tiết.
+    #[serde(default)]
+    pub hdhhdvu: Option<String>,
 }
 
 /// Điều kiện lọc khi truy vấn cục bộ.

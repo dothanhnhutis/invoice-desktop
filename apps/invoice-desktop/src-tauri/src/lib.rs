@@ -19,6 +19,7 @@ fn map_db_err(e: impl std::fmt::Display) -> String {
         s
     }
 }
+mod export;
 mod helper;
 mod secrets;
 mod sync;
@@ -119,6 +120,181 @@ fn list_invoices(
     let total = state.db.count_invoices(&filter).map_err(|e| e.to_string())?;
     let data = state.db.query(&filter).map_err(|e| e.to_string())?;
     Ok(Paged { data, total })
+}
+
+/// Lấy chi tiết 1 hóa đơn (lazy-load). Nếu DB đã cache `qrcode`+`hdhhdvu` thì trả ngay,
+/// ngược lại gọi API `/detail`, ghi vào DB rồi trả về (lần sau không gọi mạng nữa).
+#[tauri::command]
+async fn get_invoice_detail(state: State<'_, AppState>, id: String) -> Result<Invoice, String> {
+    let mut inv = state
+        .db
+        .get_invoice(&id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Không tìm thấy hóa đơn")?;
+
+    // Cache hit -> trả ngay, KHÔNG gọi mạng.
+    if inv.qrcode.is_some() && inv.hdhhdvu.is_some() {
+        return Ok(inv);
+    }
+
+    // Cache miss -> gọi API detail với khóa từ chính bản ghi.
+    let token = helper::get_access_token(&state).await?;
+    let v = hddt::query_detail(
+        &state.client,
+        &token,
+        &inv.nbmst,
+        &inv.khhdon,
+        &inv.shdon.to_string(),
+        &inv.khmshdon.to_string(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let qrcode = v
+        .get("qrcode")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let hdhhdvu = v
+        .get("hdhhdvu")
+        .map(|x| x.to_string())
+        .unwrap_or_else(|| "[]".into());
+
+    state
+        .db
+        .set_invoice_detail(&inv.id, &qrcode, &hdhhdvu)
+        .map_err(|e| e.to_string())?;
+    inv.qrcode = Some(qrcode);
+    inv.hdhhdvu = Some(hdhhdvu);
+    Ok(inv)
+}
+
+#[derive(serde::Serialize)]
+struct InvoiceExportError {
+    id: String,
+    label: String,
+    reason: String,
+}
+
+#[derive(serde::Serialize)]
+struct ExportInvoiceResult {
+    downloaded: u32,
+    dir: String,
+    errors: Vec<InvoiceExportError>,
+}
+
+/// Tải bản thể hiện hóa đơn (ZIP invoice.html/xml) từ GDT cho từng `id`, render PDF bằng
+/// trình duyệt headless, rồi ghi cặp `<khhdon>_<shdon>.xml` + `.pdf` vào thư mục `dir` người dùng chọn.
+/// Hóa đơn lỗi được gom vào `errors`, không chặn các hóa đơn còn lại.
+#[tauri::command]
+async fn download_invoices(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    ids: Vec<String>,
+    dir: String,
+) -> Result<ExportInvoiceResult, String> {
+    let out_dir = std::path::PathBuf::from(&dir);
+    if !out_dir.is_dir() {
+        return Err("Thư mục lưu không hợp lệ".into());
+    }
+    let browser =
+        export::find_browser().ok_or("Không tìm thấy Edge/Chrome trên máy để tạo PDF")?;
+    // Lấy token 1 lần (tái dùng cho mọi hóa đơn). Không retry sai mật khẩu (helper lo).
+    let token = helper::get_access_token(&state).await?;
+    let temp_root = app
+        .path()
+        .temp_dir()
+        .map_err(|e| e.to_string())?
+        .join("invoice-desktop")
+        .join("inv-export");
+
+    let mut downloaded = 0u32;
+    let mut errors: Vec<InvoiceExportError> = Vec::new();
+
+    for id in ids {
+        let inv = match state.db.get_invoice(&id) {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                errors.push(InvoiceExportError {
+                    id: id.clone(),
+                    label: id.clone(),
+                    reason: "không tìm thấy hóa đơn".into(),
+                });
+                continue;
+            }
+            Err(e) => {
+                errors.push(InvoiceExportError {
+                    id: id.clone(),
+                    label: id.clone(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+        let label = format!("{}_{}", inv.khhdon, inv.shdon);
+
+        let zip = match hddt::export_html(
+            &state.client,
+            &token,
+            &inv.nbmst,
+            &inv.khhdon,
+            &inv.shdon.to_string(),
+            &inv.khmshdon.to_string(),
+        )
+        .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                errors.push(InvoiceExportError {
+                    id: id.clone(),
+                    label: label.clone(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+
+        // Phần nặng (giải nén + gọi trình duyệt + ghi đĩa) chạy trên thread blocking.
+        let browser = browser.clone();
+        let temp_root = temp_root.clone();
+        let out_dir = out_dir.clone();
+        let name = sanitize_filename(&label);
+        let res = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+            let work = temp_root.join(uuid::Uuid::now_v7().to_string());
+            export::extract_zip_to(&zip, &work)?;
+            let html = work.join("invoice.html");
+            let xml = work.join("invoice.xml");
+            if !html.exists() {
+                return Err("ZIP thiếu invoice.html".into());
+            }
+            let pdf_tmp = work.join("invoice.pdf");
+            let pdf_bytes = export::html_to_pdf(&browser, &html, &pdf_tmp)?;
+            let xml_bytes = std::fs::read(&xml).map_err(|e| e.to_string())?;
+            std::fs::write(unique_path(&out_dir, &name, ".xml"), &xml_bytes)
+                .map_err(|e| e.to_string())?;
+            std::fs::write(unique_path(&out_dir, &name, ".pdf"), &pdf_bytes)
+                .map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_dir_all(&work); // dọn temp (best-effort)
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        match res {
+            Ok(()) => downloaded += 1,
+            Err(e) => errors.push(InvoiceExportError {
+                id: id.clone(),
+                label,
+                reason: e,
+            }),
+        }
+    }
+
+    Ok(ExportInvoiceResult {
+        downloaded,
+        dir,
+        errors,
+    })
 }
 
 /// Danh sách nguyên liệu (lọc theo `q`, phân trang phía server: trả 1 trang + tổng số).
@@ -942,6 +1118,7 @@ fn open_db(app: &tauri::App) -> Result<store::Db, Box<dyn std::error::Error>> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let solver = load_solver(app)?;
             let db = open_db(app)?;
@@ -966,6 +1143,8 @@ pub fn run() {
             has_credentials,
             get_sync_status,
             list_invoices,
+            get_invoice_detail,
+            download_invoices,
             get_raw_material_by_id,
             list_raw_materials,
             create_raw_material,

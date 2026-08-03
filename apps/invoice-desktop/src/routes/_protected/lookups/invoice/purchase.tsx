@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useSync } from "@/contexts/sync-context";
@@ -8,47 +8,58 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group";
-import { CalendarSyncIcon } from "lucide-react";
+import { CalendarSyncIcon, DownloadIcon, EllipsisIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@base-ui/react";
+import { Button as UiButton } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import * as z from "zod";
 import { useForm } from "@tanstack/react-form";
 import { Spinner } from "@/components/ui/spinner";
-import { ColumnDef, OnChangeFn, PaginationState } from "@tanstack/react-table";
+import {
+  ColumnDef,
+  OnChangeFn,
+  PaginationState,
+  RowSelectionState,
+} from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
 import { vnDateToIso } from "@/lib/date";
+import { api, pickFolder, type Invoice, type Paged } from "@/lib/api";
 
 export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
   component: RouteComponent,
 });
 
-type Paged<T> = { data: T[]; total: number };
-
-// Khớp domain::Invoice (field thô GDT).
-type Invoice = {
-  id: string;
-  kind: string;
-  nbmst: string;
-  khmshdon: number;
-  khhdon: string;
-  shdon: number;
-  dvtte: string;
-  nbdchi: string;
-  nbten: string;
-  tgtcthue: number;
-  tgtthue: number;
-  tgtttbso: number;
-  tlhdon: string;
-  ttcktmai: number;
-  tthai: number;
-  ttxly: number;
-  ntao: string;
-  nmten: string;
-  nmmst: string;
-  nmdchi: string;
-  raw_json: string;
-};
-
 export const columns: ColumnDef<Invoice>[] = [
+  {
+    id: "select",
+    minSize: 40,
+    header: ({ table }) => (
+      <input
+        type="checkbox"
+        className="size-4 align-middle"
+        aria-label="Chọn tất cả"
+        checked={table.getIsAllPageRowsSelected()}
+        onChange={table.getToggleAllPageRowsSelectedHandler()}
+      />
+    ),
+    cell: ({ row }) => (
+      <input
+        type="checkbox"
+        className="size-4 align-middle"
+        aria-label="Chọn dòng"
+        checked={row.getIsSelected()}
+        onChange={row.getToggleSelectedHandler()}
+      />
+    ),
+  },
   {
     id: "nguoiBan",
     minSize: 400,
@@ -176,6 +187,68 @@ export const columns: ColumnDef<Invoice>[] = [
       );
     },
   },
+  {
+    id: "actions",
+    minSize: 190,
+    header: () => <div className="text-center">Hành động</div>,
+    cell: ({ row }) => {
+      const r = row.original;
+      // Chỉ copy giá trị, tách nhau bằng TAB -> dán vào Google Sheet rơi đúng 4 ô.
+      const copyText = `${r.nbmst}\t${r.khhdon}\t${r.shdon}\t${r.khmshdon}`;
+      const onCopy = async () => {
+        try {
+          await navigator.clipboard.writeText(copyText);
+          toast.success("Đã copy khóa hoá đơn");
+        } catch {
+          toast.error("Copy thất bại");
+        }
+      };
+      const onDownload = async () => {
+        const dir = await pickFolder();
+        if (!dir) return;
+        try {
+          const res = await api.downloadInvoices([r.id], dir);
+          if (res.downloaded > 0) toast.success("Đã tải hoá đơn (XML + PDF)");
+          if (res.errors.length)
+            toast.error(`Lỗi: ${res.errors[0].reason}`);
+        } catch (e) {
+          toast.error(String(e));
+        }
+      };
+      return (
+        <div className="text-center">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <UiButton variant="ghost" size="icon">
+                  <EllipsisIcon />
+                </UiButton>
+              }
+            />
+            <DropdownMenuContent className="w-44" align="end">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Hành động</DropdownMenuLabel>
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      to="/lookups/invoice/purchase/$id"
+                      params={{ id: r.id }}
+                    />
+                  }
+                >
+                  Xem chi tiết
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onCopy}>Copy</DropdownMenuItem>
+                <DropdownMenuItem onClick={onDownload}>
+                  Tải xuống
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      );
+    },
+  },
 ];
 
 type SyncState = {
@@ -197,6 +270,9 @@ function RouteComponent() {
     pageIndex: 0,
     pageSize: 50,
   });
+  // Chọn dòng theo id (giữ được qua các trang nhờ getRowId = id).
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [downloading, setDownloading] = useState(false);
 
   const invoices = useQuery({
     queryKey: ["invoices", pagination.pageIndex, pagination.pageSize],
@@ -237,6 +313,28 @@ function RouteComponent() {
 
   const total = invoices.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pagination.pageSize));
+
+  const selectedIds = Object.keys(rowSelection).filter((k) => rowSelection[k]);
+
+  // Tải hàng loạt: chọn thư mục -> gọi backend -> toast kết quả.
+  const downloadSelected = async () => {
+    if (!selectedIds.length) return;
+    const dir = await pickFolder();
+    if (!dir) return;
+    setDownloading(true);
+    try {
+      const res = await api.downloadInvoices(selectedIds, dir);
+      if (res.downloaded > 0)
+        toast.success(`Đã tải ${res.downloaded} hoá đơn (XML + PDF)`);
+      if (res.errors.length)
+        toast.error(`${res.errors.length} hoá đơn lỗi: ${res.errors[0].reason}`);
+      setRowSelection({});
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   // Đổi số dòng/trang -> về trang đầu.
   const onPaginationChange: OnChangeFn<PaginationState> = (updater) => {
@@ -336,6 +434,19 @@ function RouteComponent() {
             </InputGroupAddon>
           </InputGroup>
         </form>
+
+        <div className="flex items-center justify-end">
+          <UiButton
+            variant="secondary"
+            disabled={!selectedIds.length || downloading}
+            onClick={downloadSelected}
+          >
+            {downloading && <Spinner />}
+            <DownloadIcon />
+            Tải xuống ({selectedIds.length})
+          </UiButton>
+        </div>
+
         <DataTable
           type="fixed"
           columns={columns}
@@ -343,6 +454,10 @@ function RouteComponent() {
           pagination={pagination}
           onPaginationChange={onPaginationChange}
           pageCount={pageCount}
+          enableRowSelection
+          rowSelection={rowSelection}
+          onRowSelectionChange={setRowSelection}
+          getRowId={(r) => r.id}
         />
       </div>
     </div>
