@@ -10,8 +10,7 @@ import {
 } from "@/components/ui/input-group";
 import { CalendarSyncIcon, DownloadIcon, EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@base-ui/react";
-import { Button as UiButton } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,6 +31,10 @@ import {
 import { DataTable } from "@/components/data-table";
 import { vnDateToIso } from "@/lib/date";
 import { api, pickFolder, type Invoice, type Paged } from "@/lib/api";
+import { Input } from "@/components/ui/input";
+import { DateRangePicker } from "@/components/date-range-picker";
+import type { DateRange } from "react-day-picker";
+import { format } from "date-fns";
 
 export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
   component: RouteComponent,
@@ -40,7 +43,7 @@ export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
 export const columns: ColumnDef<Invoice>[] = [
   {
     id: "select",
-    minSize: 40,
+    size: 35,
     header: ({ table }) => (
       <input
         type="checkbox"
@@ -86,10 +89,18 @@ export const columns: ColumnDef<Invoice>[] = [
       return <div className="text-center">{date}</div>;
     },
   },
+
+  {
+    accessorKey: "khmshdon",
+    minSize: 120,
+    header: () => <div className="text-center">Ký hiệu mẫu số</div>,
+    cell: ({ row }) => {
+      return <div className="text-center">{row.getValue("khmshdon")}</div>;
+    },
+  },
   {
     accessorKey: "khhdon",
     minSize: 150,
-
     header: () => <div className="text-center">Ký hiệu HĐ</div>,
     cell: ({ row }) => {
       return <div className="text-center">{row.getValue("khhdon")}</div>;
@@ -189,7 +200,7 @@ export const columns: ColumnDef<Invoice>[] = [
   },
   {
     id: "actions",
-    minSize: 190,
+    size: 100,
     header: () => <div className="text-center">Hành động</div>,
     cell: ({ row }) => {
       const r = row.original;
@@ -209,8 +220,7 @@ export const columns: ColumnDef<Invoice>[] = [
         try {
           const res = await api.downloadInvoices([r.id], dir);
           if (res.downloaded > 0) toast.success("Đã tải hoá đơn (XML + PDF)");
-          if (res.errors.length)
-            toast.error(`Lỗi: ${res.errors[0].reason}`);
+          if (res.errors.length) toast.error(`Lỗi: ${res.errors[0].reason}`);
         } catch (e) {
           toast.error(String(e));
         }
@@ -220,9 +230,9 @@ export const columns: ColumnDef<Invoice>[] = [
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <UiButton variant="ghost" size="icon">
+                <Button variant="ghost" size="icon">
                   <EllipsisIcon />
-                </UiButton>
+                </Button>
               }
             />
             <DropdownMenuContent className="w-44" align="end">
@@ -258,6 +268,22 @@ type SyncState = {
   last_sync_at: number | null;
 };
 
+// Bộ lọc đã áp dụng (khớp InvoiceFilter phía Rust; bỏ field rỗng).
+type AppliedFilter = {
+  nbmst?: string;
+  khhdon?: string;
+  shdon?: number;
+  khmshdon?: number;
+  from?: string;
+  to?: string;
+};
+
+// Ngày (giờ VN) -> ISO biên đầu/cuối ngày để so với ntao (UTC ISO).
+function dayBoundIso(d: Date, end: boolean): string {
+  const t = end ? "23:59:59.999" : "00:00:00";
+  return new Date(`${format(d, "yyyy-MM-dd")}T${t}+07:00`).toISOString();
+}
+
 const formSchema = z.object({
   floor: z
     .string()
@@ -268,20 +294,31 @@ function RouteComponent() {
   const { progress, error } = useSync(); // tiến độ/lỗi realtime (listener toàn cục ở __root)
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
-    pageSize: 50,
+    pageSize: 10,
   });
   // Chọn dòng theo id (giữ được qua các trang nhờ getRowId = id).
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [downloading, setDownloading] = useState(false);
 
+  // Ô nhập filter (chưa áp dụng) + filter đã áp dụng (dùng cho query).
+  const [filterInputs, setFilterInputs] = useState({
+    nbmst: "",
+    khhdon: "",
+    shdon: "",
+    khmshdon: "",
+  });
+  const [range, setRange] = useState<DateRange | undefined>();
+  const [applied, setApplied] = useState<AppliedFilter>({});
+
   const invoices = useQuery({
-    queryKey: ["invoices", pagination.pageIndex, pagination.pageSize],
+    queryKey: ["invoices", pagination.pageIndex, pagination.pageSize, applied],
     // Phân trang phía server: chỉ tải đúng 1 trang + tổng số.
     queryFn: async () =>
       invoke<Paged<Invoice>>("list_invoices", {
         filter: {
           limit: pagination.pageSize,
           offset: pagination.pageIndex * pagination.pageSize,
+          ...applied,
         },
       }),
     placeholderData: keepPreviousData,
@@ -316,6 +353,34 @@ function RouteComponent() {
 
   const selectedIds = Object.keys(rowSelection).filter((k) => rowSelection[k]);
 
+  // Áp dụng filter: dựng AppliedFilter từ ô nhập + khoảng ngày, về trang 1.
+  const applyFilter = () => {
+    const shdon = filterInputs.shdon.trim() ? Number(filterInputs.shdon.trim()) : undefined;
+    const khmshdon = filterInputs.khmshdon.trim()
+      ? Number(filterInputs.khmshdon.trim())
+      : undefined;
+    setApplied({
+      nbmst: filterInputs.nbmst.trim() || undefined,
+      khhdon: filterInputs.khhdon.trim() || undefined,
+      shdon: Number.isFinite(shdon) ? shdon : undefined,
+      khmshdon: Number.isFinite(khmshdon) ? khmshdon : undefined,
+      from: range?.from ? dayBoundIso(range.from, false) : undefined,
+      to: range?.to
+        ? dayBoundIso(range.to, true)
+        : range?.from
+          ? dayBoundIso(range.from, true)
+          : undefined,
+    });
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+
+  const clearFilter = () => {
+    setFilterInputs({ nbmst: "", khhdon: "", shdon: "", khmshdon: "" });
+    setRange(undefined);
+    setApplied({});
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+
   // Tải hàng loạt: chọn thư mục -> gọi backend -> toast kết quả.
   const downloadSelected = async () => {
     if (!selectedIds.length) return;
@@ -327,7 +392,9 @@ function RouteComponent() {
       if (res.downloaded > 0)
         toast.success(`Đã tải ${res.downloaded} hoá đơn (XML + PDF)`);
       if (res.errors.length)
-        toast.error(`${res.errors.length} hoá đơn lỗi: ${res.errors[0].reason}`);
+        toast.error(
+          `${res.errors.length} hoá đơn lỗi: ${res.errors[0].reason}`,
+        );
       setRowSelection({});
     } catch (e) {
       toast.error(String(e));
@@ -435,8 +502,72 @@ function RouteComponent() {
           </InputGroup>
         </form>
 
+        {/* Thanh lọc: MST bên bán, ký hiệu HĐ, số HĐ, ký hiệu mẫu số, khoảng ngày lập. */}
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">MST bên bán</label>
+            <Input
+              value={filterInputs.nbmst}
+              onChange={(e) =>
+                setFilterInputs((s) => ({ ...s, nbmst: e.target.value }))
+              }
+              placeholder="MST bên bán"
+              className="w-40"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">Ký hiệu HĐ</label>
+            <Input
+              value={filterInputs.khhdon}
+              onChange={(e) =>
+                setFilterInputs((s) => ({ ...s, khhdon: e.target.value }))
+              }
+              placeholder="VD: C26TAA"
+              className="w-32"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">Số HĐ</label>
+            <Input
+              value={filterInputs.shdon}
+              onChange={(e) =>
+                setFilterInputs((s) => ({ ...s, shdon: e.target.value }))
+              }
+              inputMode="numeric"
+              placeholder="Số HĐ"
+              className="w-28"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">
+              Ký hiệu mẫu số
+            </label>
+            <Input
+              value={filterInputs.khmshdon}
+              onChange={(e) =>
+                setFilterInputs((s) => ({ ...s, khmshdon: e.target.value }))
+              }
+              inputMode="numeric"
+              placeholder="VD: 1"
+              className="w-28"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">
+              Thời gian lập
+            </label>
+            <DateRangePicker value={range} onChange={setRange} />
+          </div>
+          <Button variant="secondary" onClick={applyFilter}>
+            Lọc
+          </Button>
+          <Button variant="ghost" onClick={clearFilter}>
+            Xoá lọc
+          </Button>
+        </div>
+
         <div className="flex items-center justify-end">
-          <UiButton
+          <Button
             variant="secondary"
             disabled={!selectedIds.length || downloading}
             onClick={downloadSelected}
@@ -444,7 +575,7 @@ function RouteComponent() {
             {downloading && <Spinner />}
             <DownloadIcon />
             Tải xuống ({selectedIds.length})
-          </UiButton>
+          </Button>
         </div>
 
         <DataTable
@@ -458,6 +589,7 @@ function RouteComponent() {
           rowSelection={rowSelection}
           onRowSelectionChange={setRowSelection}
           getRowId={(r) => r.id}
+          columnPinning={{ left: ["select", "nguoiBan"], right: ["actions"] }}
         />
       </div>
     </div>

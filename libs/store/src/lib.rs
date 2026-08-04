@@ -195,19 +195,7 @@ impl Db {
              FROM invoices WHERE 1=1",
         );
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(kind) = filter.kind {
-            sql.push_str(" AND kind = ?");
-            args.push(Box::new(kind.as_str().to_string()));
-        }
-        if let Some(from) = &filter.from {
-            sql.push_str(" AND ntao >= ?");
-            args.push(Box::new(from.clone()));
-        }
-        if let Some(to) = &filter.to {
-            sql.push_str(" AND ntao <= ?");
-            args.push(Box::new(to.clone()));
-        }
+        push_invoice_conditions(filter, &mut sql, &mut args);
         sql.push_str(" ORDER BY ntao DESC");
         if let Some(limit) = filter.limit {
             sql.push_str(" LIMIT ?");
@@ -255,19 +243,7 @@ impl Db {
     pub fn count_invoices(&self, filter: &InvoiceFilter) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM invoices WHERE 1=1");
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(kind) = filter.kind {
-            sql.push_str(" AND kind = ?");
-            args.push(Box::new(kind.as_str().to_string()));
-        }
-        if let Some(from) = &filter.from {
-            sql.push_str(" AND ntao >= ?");
-            args.push(Box::new(from.clone()));
-        }
-        if let Some(to) = &filter.to {
-            sql.push_str(" AND ntao <= ?");
-            args.push(Box::new(to.clone()));
-        }
+        push_invoice_conditions(filter, &mut sql, &mut args);
 
         let conn = self.conn.lock().unwrap();
         let param_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
@@ -608,6 +584,43 @@ fn row_to_invoice(r: &rusqlite::Row) -> Result<Invoice> {
     })
 }
 
+/// Ghép các điều kiện lọc hóa đơn vào `sql`/`args` (dùng chung cho `query` + `count_invoices`
+/// để không lệch nhau). Chuỗi dò chứa dùng LIKE `%..%`; số khớp chính xác.
+fn push_invoice_conditions(
+    filter: &InvoiceFilter,
+    sql: &mut String,
+    args: &mut Vec<Box<dyn rusqlite::ToSql>>,
+) {
+    if let Some(kind) = filter.kind {
+        sql.push_str(" AND kind = ?");
+        args.push(Box::new(kind.as_str().to_string()));
+    }
+    if let Some(from) = &filter.from {
+        sql.push_str(" AND ntao >= ?");
+        args.push(Box::new(from.clone()));
+    }
+    if let Some(to) = &filter.to {
+        sql.push_str(" AND ntao <= ?");
+        args.push(Box::new(to.clone()));
+    }
+    if let Some(nbmst) = &filter.nbmst {
+        sql.push_str(" AND nbmst LIKE ?");
+        args.push(Box::new(format!("%{nbmst}%")));
+    }
+    if let Some(khhdon) = &filter.khhdon {
+        sql.push_str(" AND khhdon LIKE ?");
+        args.push(Box::new(format!("%{khhdon}%")));
+    }
+    if let Some(shdon) = filter.shdon {
+        sql.push_str(" AND shdon = ?");
+        args.push(Box::new(shdon as i64));
+    }
+    if let Some(khmshdon) = filter.khmshdon {
+        sql.push_str(" AND khmshdon = ?");
+        args.push(Box::new(khmshdon as i64));
+    }
+}
+
 fn row_to_raw_material(r: &rusqlite::Row) -> Result<RawMaterial> {
     Ok(RawMaterial {
         id: r.get(0)?,
@@ -790,6 +803,82 @@ mod tests {
             })
             .unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn query_filters_by_invoice_fields() {
+        let db = Db::open_in_memory().unwrap();
+        let mut a = inv("a", "2026-01-01", 1.0);
+        a.nbmst = "0100000001".into();
+        a.khhdon = "C26TAA".into();
+        a.shdon = 100;
+        a.khmshdon = 1;
+        let mut b = inv("b", "2026-02-01", 2.0);
+        b.nbmst = "0100000002".into();
+        b.khhdon = "C26TAB".into();
+        b.shdon = 200;
+        b.khmshdon = 2;
+        let mut c = inv("c", "2026-03-01", 3.0);
+        c.nbmst = "0100000001".into();
+        c.khhdon = "K26TAA".into();
+        c.shdon = 300;
+        c.khmshdon = 1;
+        db.upsert_invoices(&[a, b, c]).unwrap();
+
+        // nbmst dò chứa -> a & c (sắp xếp ntao desc: c trước a).
+        let r = db
+            .query(&InvoiceFilter {
+                nbmst: Some("0000001".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            r.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["c", "a"]
+        );
+
+        // khhdon dò chứa "C26" -> a & b.
+        assert_eq!(
+            db.count_invoices(&InvoiceFilter {
+                khhdon: Some("C26".into()),
+                ..Default::default()
+            })
+            .unwrap(),
+            2
+        );
+
+        // shdon khớp chính xác.
+        let r = db
+            .query(&InvoiceFilter {
+                shdon: Some(200),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            r.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["b"]
+        );
+
+        // khmshdon = 1 -> a & c; kết hợp khoảng ngày thu còn c.
+        assert_eq!(
+            db.count_invoices(&InvoiceFilter {
+                khmshdon: Some(1),
+                ..Default::default()
+            })
+            .unwrap(),
+            2
+        );
+        let r = db
+            .query(&InvoiceFilter {
+                khmshdon: Some(1),
+                from: Some("2026-02-15".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            r.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["c"]
         );
     }
 

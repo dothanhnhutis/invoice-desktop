@@ -174,7 +174,7 @@ pub async fn export_html(
     khmshdon: &str,
 ) -> Result<Vec<u8>, QueryError> {
     let url = reqwest::Url::parse_with_params(
-        &format!("{BASE}/api/query/invoices/export-html"),
+        &format!("{BASE}/api/query/invoices/export-xml"),
         &[
             ("nbmst", nbmst),
             ("khhdon", khhdon),

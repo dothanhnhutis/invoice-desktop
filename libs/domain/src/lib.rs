@@ -93,6 +93,14 @@ pub struct InvoiceFilter {
     /// Khoảng ngày (chuỗi so sánh được — dùng chung định dạng với `Invoice::date`).
     pub from: Option<String>,
     pub to: Option<String>,
+    /// MST bên bán — dò chứa (LIKE).
+    pub nbmst: Option<String>,
+    /// Ký hiệu hóa đơn — dò chứa (LIKE).
+    pub khhdon: Option<String>,
+    /// Số hóa đơn — khớp chính xác.
+    pub shdon: Option<u32>,
+    /// Ký hiệu mẫu số — khớp chính xác.
+    pub khmshdon: Option<u8>,
     pub limit: Option<u32>,
     /// Bỏ qua bao nhiêu dòng (phân trang; chỉ áp dụng khi có `limit`).
     pub offset: Option<u32>,

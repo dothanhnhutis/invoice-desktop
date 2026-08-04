@@ -3,7 +3,7 @@
 
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Giải nén toàn bộ entry của ZIP `bytes` ra thư mục `dir` (phẳng theo cấu trúc trong zip).
 pub fn extract_zip_to(bytes: &[u8], dir: &Path) -> Result<(), String> {
@@ -70,18 +70,38 @@ fn file_url(path: &Path) -> String {
 
 /// Render `html_path` -> `out_pdf` bằng trình duyệt headless. Trả về bytes PDF đã đọc lại.
 pub fn html_to_pdf(browser: &Path, html_path: &Path, out_pdf: &Path) -> Result<Vec<u8>, String> {
+    // Profile riêng (nằm trong thư mục làm việc vốn đã unique theo uuid) -> ép chạy instance
+    // headless ĐỘC LẬP, không "bám" vào Edge/Chrome đang mở của người dùng (nguồn cơn cảnh báo
+    // task_manager/renderer + mã thoát bất thường).
+    let user_data = out_pdf
+        .parent()
+        .map(|p| p.join("cr-user-data"))
+        .unwrap_or_else(|| out_pdf.with_extension("cr-user-data"));
+
     let status = Command::new(browser)
         .arg("--headless=new")
         .arg("--disable-gpu")
         .arg("--no-pdf-header-footer")
+        .arg("--no-first-run")
+        .arg("--disable-logging")
+        .arg("--log-level=3")
+        .arg(format!("--user-data-dir={}", user_data.to_string_lossy()))
         // Cho JS (vẽ QR trong details.js) kịp chạy trước khi in.
         .arg("--virtual-time-budget=3000")
         .arg(format!("--print-to-pdf={}", out_pdf.to_string_lossy()))
         .arg(file_url(html_path))
+        .stdout(Stdio::null()) // Chặn log ồn ào của Chrome khỏi console app.
+        .stderr(Stdio::null())
         .status()
         .map_err(|e| format!("không chạy được trình duyệt: {e}"))?;
-    if !status.success() {
-        return Err(format!("trình duyệt thoát mã {:?}", status.code()));
+
+    // Coi là THÀNH CÔNG khi file PDF tồn tại & không rỗng — bất kể mã thoát
+    // (Chrome headless đôi khi thoát ≠ 0 dù đã in xong).
+    match std::fs::read(out_pdf) {
+        Ok(bytes) if !bytes.is_empty() => Ok(bytes),
+        _ => Err(format!(
+            "tạo PDF thất bại (trình duyệt thoát mã {:?})",
+            status.code()
+        )),
     }
-    std::fs::read(out_pdf).map_err(|e| format!("không đọc được PDF: {e}"))
 }

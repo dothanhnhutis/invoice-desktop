@@ -3,10 +3,14 @@
 Tài liệu bàn giao để **tiếp tục công việc ở máy khác**. Đây là nguồn ngữ cảnh chính (memory
 của Claude nằm ở `~/.claude/...` **cục bộ theo máy**, không theo repo).
 
-> Cập nhật lần cuối: phiên tinh chỉnh **hóa đơn & UI** — phân trang hóa đơn phía server
-> (`list_invoices` → `Paged`), bỏ lọc `ttxly==5` (lấy MỌI trạng thái), form FLOOR nhập `dd/mm/yyyy`,
-> nav-header breadcrumb động + sidebar active theo route, mở file COA chưa lưu bằng app ngoài
-> (`open_bytes_external`). (Trước đó: hệ Nguyên liệu + COA.)
+> Cập nhật lần cuối: phiên **chi tiết hoá đơn & tải xuống** — lazy-load `qrcode`/`hdhhdvu` vào
+> SQLite khi xem chi tiết (`get_invoice_detail`), trang chi tiết dựng như hoá đơn GTGT (QR + bảng
+> hàng hoá + tổng gồm Tổng tiền phí), cột Hành động → DropdownMenu (Xem/Copy/Tải), **tải XML+PDF**
+> qua Edge/Chrome headless (`download_invoices`, module `export.rs`, endpoint `export-xml`), ghim
+> cột (select + người bán trái / hành động phải) + fix tràn ngang bằng `min-w-0`, và **filter**
+> danh sách (nbmst/khhdon/shdon/khmshdon + khoảng ngày lập bằng Range Picker).
+> (Trước đó: phân trang hóa đơn server, bỏ lọc `ttxly==5`, form FLOOR `dd/mm/yyyy`, nav-header động;
+> và hệ Nguyên liệu + COA.)
 > Nếu bạn sửa tiếp, cập nhật lại phần **Trạng thái** và **Việc còn dang dở** bên dưới.
 
 ---
@@ -124,7 +128,13 @@ hardcode `isActive`.
 
 Auth/sync/hóa đơn: `login`, `logout`, `profile`, `set_credentials`, `clear_credentials`,
 `has_credentials`, `get_sync_status`, `list_invoices(filter)` **→ `Paged<Invoice>`** (phân trang server:
-`filter.limit`/`filter.offset` + `count_invoices`), `get_floor`, `set_floor(date)` (date = ISO `yyyy-MM-dd`).
+`filter.limit`/`filter.offset` + `count_invoices`; filter giờ có thêm `nbmst/khhdon/shdon/khmshdon`),
+`get_invoice_detail(id)` **→ `Invoice`** (lazy-load `qrcode`+`hdhhdvu`: gọi API detail rồi cache DB —
+xem 6.6), `download_invoices(ids, dir)` **→ `ExportInvoiceResult {downloaded, dir, errors}`** (tải
+XML+PDF về `dir` — xem 6.6), `get_floor`, `set_floor(date)` (date = ISO `yyyy-MM-dd`).
+
+Plugin thêm: `tauri_plugin_dialog` (hộp thoại chọn thư mục lưu — cần `dialog:default` trong
+`capabilities/default.json`).
 
 Nguyên liệu: `get_raw_material_by_id`, `list_raw_materials(filter)`, `create_raw_material`,
 `update_raw_material`, `import_raw_materials(csv_bytes)`.
@@ -140,12 +150,19 @@ COA: `list_coas`, `create_coa`, `create_coas_bulk`, `read_coa_file`, `open_coa_f
 [libs/domain/src/lib.rs](libs/domain/src/lib.rs). Giữ `id` (PK), `kind` (mua/bán), `raw_json`; thêm:
 `nbmst, khmshdon(u8), khhdon, shdon(u32), dvtte, nbdchi, nbten, tgtcthue(f64), tgtthue(f64),
 tgtttbso(f64), tlhdon, ttcktmai(f64), tthai(u8), ttxly(u8), ntao(String ISO), nmten, nmmst, nmdchi`.
+- **Lazy-load** (thêm cuối struct, `#[serde(default)]`): `qrcode: Option<String>`,
+  `hdhhdvu: Option<String>` — sync để `null`; chỉ điền khi người dùng xem chi tiết (xem 6.6). Bảng
+  SQLite có 2 cột `qrcode TEXT`/`hdhhdvu TEXT`, tạo bằng **ALTER TABLE idempotent** (check
+  `PRAGMA table_info` — `add_column_if_missing`), nên DB cũ tự nâng cấp không cần xoá.
 - **Ngày dùng `ntao`** (ngày tạo) — là cột dùng để ORDER BY / lọc from-to / prune theo FLOOR
   (ISO so sánh chuỗi vẫn đúng thứ tự). Server vẫn lọc theo `tdlap`.
 - Tiền để `f64`. Bảng SQLite ([libs/store/src/lib.rs](libs/store/src/lib.rs)) khớp field này.
-- **`InvoiceFilter`** = `{kind, from, to, limit, offset}`. `list_invoices` phân trang phía server:
-  trả `Paged<Invoice> {data, total}` (`query` limit/offset + `count_invoices`). Trang purchase dùng
-  `DataTable` manualPagination (mặc định 50 dòng, đổi số dòng → về trang 1).
+- **`InvoiceFilter`** = `{kind, from, to, nbmst, khhdon, shdon(u32), khmshdon(u8), limit, offset}`.
+  Match: `nbmst`/`khhdon` **dò chứa** (`LIKE %..%`), `shdon`/`khmshdon` **khớp chính xác**;
+  `from`/`to` so `ntao`. `query` + `count_invoices` dùng chung helper `push_invoice_conditions`
+  (tránh lệch WHERE). `list_invoices` phân trang phía server: trả `Paged<Invoice> {data, total}`
+  (`query` limit/offset + `count_invoices`). Trang purchase dùng `DataTable` manualPagination
+  (mặc định 50 dòng, đổi số dòng → về trang 1).
 
 ---
 
@@ -186,6 +203,56 @@ Quản lý nguyên liệu thô + phiếu kiểm nghiệm (COA — Certificate of
 
 ---
 
+## 6.6. Chi tiết hoá đơn, Tải xuống (XML+PDF), Ghim cột & Filter
+
+**Lazy-load chi tiết** — Sync chỉ nạp header (`qrcode`/`hdhhdvu` = null). Khi mở chi tiết,
+`get_invoice_detail(id)` gọi `GET /api/query/invoices/detail?nbmst&khhdon&shdon&khmshdon`
+(`hddt::query_detail`), điền `qrcode`+`hdhhdvu`, **cache vào DB** (`set_invoice_detail`) rồi trả về;
+lần sau lấy thẳng từ DB. Upsert của sync **không** ghi đè 2 field này. (So `detail` vs 1 phần tử
+`datas` của list: chỉ khác đúng 2 field này.)
+
+**Trang chi tiết** [purchase_.$id.tsx](apps/invoice-desktop/src/routes/_protected/lookups/invoice/purchase_.$id.tsx)
+(dấu `_` un-nest khỏi layout danh sách): dựng như hoá đơn GTGT — QR (từ `qrcode`) trái; mẫu số/ký
+hiệu/số HĐ phải; tiêu đề; ngày lập (`tdlap` từ `raw_json`); MCCQT; bên bán/bên mua; bảng hàng hoá
+dịch vụ (parse `hdhhdvu` + "Số lô"/"Hạn dùng" từ `ttkhac`); tổng gồm **Tổng tiền phí** (`tgtphi`/
+`ttttkhac`), Chiết khấu, Tổng thanh toán. nav-header có breadcrumb cho route này.
+
+**Cột Hành động = DropdownMenu** ([purchase.tsx](apps/invoice-desktop/src/routes/_protected/lookups/invoice/purchase.tsx)):
+Xem chi tiết / **Copy** (chỉ giá trị, tab-separated `nbmst\tkhhdon\tshdon\tkhmshdon` — dán Google
+Sheets) / **Tải xuống**.
+
+**Tải xuống XML + PDF** — module [export.rs](apps/invoice-desktop/src-tauri/src/export.rs):
+`GET /api/query/invoices/export-xml` (bearer token — **KHÔNG** phải `export-html`; endpoint đó 404)
+trả **ZIP 5 file** (chỉ khác file XML), giải nén (`extract_zip_to`), render `invoice.html` → PDF bằng
+**Edge/Chrome headless** (`html_to_pdf`: `--headless=new --no-pdf-header-footer --print-to-pdf`,
+`--user-data-dir` cô lập, `Stdio::null`, coi là thành công khi **file PDF tồn tại & khác rỗng**).
+`find_browser` dò Edge/Chrome ở path Windows chuẩn hoặc env **`INVOICE_BROWSER`**. Command
+`download_invoices(ids, dir)` chạy mỗi hoá đơn: `get_invoice` → `export_xml` → giải nén →
+`html_to_pdf` (trong `spawn_blocking`) → ghi `<khhdon>_<shdon>.xml` + `.pdf` (unique_path), trả
+`ExportInvoiceResult {downloaded, dir, errors}`. UI: nút ở trang chi tiết (1 hoá đơn) + checkbox chọn
+nhiều ở danh sách + **hộp thoại chọn thư mục** (`pickFolder` qua `@tauri-apps/plugin-dialog`).
+⚠️ Máy đích **phải có Edge hoặc Chrome** để render PDF.
+
+**Ghim cột** ([data-table.tsx](apps/invoice-desktop/src/components/data-table.tsx)):
+`enableColumnPinning` + `columnPinning={{ left: ["select","nguoiBan"], right: ["actions"] }}`; helper
+`pinStyle` (sticky, left/right qua `getStart`/`getAfter`) + `pinClass` (bg + border biên). Fix tràn
+ngang **khi có sidebar** (flex `min-width:auto`) bằng `min-w-0` trên `SidebarInset`
+([_protected/route.tsx](apps/invoice-desktop/src/routes/_protected/route.tsx)).
+⚠️ **KHÔNG sửa component shadcn `ui/*`** (yêu cầu rõ của user) — chỉ chỉnh `data-table.tsx` (app-level)
+và `route.tsx`.
+
+**Filter danh sách** ([purchase.tsx](apps/invoice-desktop/src/routes/_protected/lookups/invoice/purchase.tsx)):
+thanh filter (Input `nbmst`/`khhdon`/`shdon`/`khmshdon` + **Range Picker** ngày lập) + nút Lọc/Xoá
+lọc. Bấm Lọc → dựng `AppliedFilter` (bỏ field rỗng, parse số), đưa vào queryKey/queryFn, **về trang
+1**. Khoảng ngày → ISO **biên ngày giờ VN** (`dayBoundIso` dùng `+07:00`) để so `ntao` (UTC) đúng.
+Filter giữ ở **state cục bộ** (không lên URL). Component mới (kiểu shadcn, thích ứng @base-ui + react-day-picker@10):
+[ui/popover.tsx](apps/invoice-desktop/src/components/ui/popover.tsx),
+[ui/calendar.tsx](apps/invoice-desktop/src/components/ui/calendar.tsx),
+[date-range-picker.tsx](apps/invoice-desktop/src/components/date-range-picker.tsx). Deps mới:
+`react-day-picker@10`, `date-fns@4`.
+
+---
+
 ## 7. ⚠️ VIỆC CÒN DANG DỞ / BẪY (đọc kỹ khi tiếp tục)
 
 - **Spawn sync ĐÃ BẬT** — [lib.rs](apps/invoice-desktop/src-tauri/src/lib.rs) trong `setup` gọi
@@ -193,9 +260,14 @@ Quản lý nguyên liệu thô + phiếu kiểm nghiệm (COA — Certificate of
 - **Listener `sync://*` VẪN COMMENT** — [contexts/sync-context.tsx](apps/invoice-desktop/src/contexts/sync-context.tsx):
   `useEffect` đăng ký `listen("sync://progress"/"error")` còn bị comment → `useSync().progress/error`
   luôn null (banner tiến độ/lỗi ở purchase không hoạt động). Bỏ comment để bật lại.
-- **Migration DB**: đã đổi cột bảng `invoices`. File `invoices.db` cũ KHÔNG tương thích →
-  **xóa `%APPDATA%/com.thanhnhut.invoice-desktop/invoices.db`** trước khi chạy (máy này đã xóa;
-  máy khác DB tạo mới tự động nên không cần).
+- **Migration DB**: đã đổi cột bảng `invoices` (đợt redesign schema). File `invoices.db` cũ (trước
+  đợt đó) KHÔNG tương thích → **xóa `%APPDATA%/com.thanhnhut.invoice-desktop/invoices.db`** trước khi
+  chạy (máy này đã xóa; máy khác DB tạo mới tự động nên không cần). **Lưu ý**: 2 cột mới `qrcode`/
+  `hdhhdvu` thêm bằng **ALTER idempotent** nên DB đã có sẵn (sau redesign) **không** cần xoá lại.
+- **Render PDF cần trình duyệt**: `download_invoices` gọi Edge/Chrome headless để tạo PDF → **máy đích
+  phải cài Edge hoặc Chrome** (hoặc set env `INVOICE_BROWSER` trỏ tới binary). Không có → tải được XML
+  nhưng PDF lỗi (ghi vào `errors`). Đã thử nhúng **nền + QR vào PDF** nhưng **rewind bỏ** — PDF hiện
+  render theo `invoice.html` gốc trong ZIP.
 - **Lỗi TS6133 tồn sẵn** ở `contexts/sync-context.tsx`, `hooks/use-online.ts` (import/biến thừa) →
   chặn `pnpm build` (tsc) nhưng **KHÔNG** chặn `pnpm tauri dev`. (`purchase.tsx` đã sạch sau khi làm
   phân trang.) Dọn khi rảnh.
@@ -210,7 +282,7 @@ Quản lý nguyên liệu thô + phiếu kiểm nghiệm (COA — Certificate of
 ## 8. Chạy & kiểm thử
 
 ```bash
-# Frontend deps (một lần)
+# Frontend deps (một lần) — gồm react-day-picker@10 + date-fns@4 (Range Picker filter)
 cd apps/invoice-desktop && pnpm install
 
 # Chạy app (Vite + Tauri). routeTree.gen.ts tự sinh khi dev chạy.
@@ -218,7 +290,7 @@ pnpm tauri dev
 
 # Backend
 cargo build --workspace
-cargo test -p hddt -p store            # hddt 9, store 14 (KHÔNG cần mạng)
+cargo test -p hddt -p store            # hddt 9, store 17 (KHÔNG cần mạng)
 cargo test -p invoice-desktop          # unit test: is_valid_code, parse_flex_date, dates_match, sync
 
 # Sinh lại route khi thêm/sửa file trong src/routes (nếu dev server không chạy)
@@ -229,7 +301,10 @@ HDDT_USER=<MST> HDDT_PASS=<mật khẩu đúng> cargo run -p captcha --bin login
 ```
 
 Kiểm thử end-to-end: bật spawn sync (mục 7) → `pnpm tauri dev` → đăng nhập (mật khẩu đúng) →
-sync backfill → bảng purchase hiện hóa đơn theo field mới.
+sync backfill → bảng purchase hiện hóa đơn theo field mới. Kiểm thêm (mục 6.6): mở **Chi tiết** (lần
+đầu gọi API detail + cache QR/hàng hoá), **Copy** dán Google Sheets, **Tải xuống** (XML+PDF, cần
+Edge/Chrome), **Filter** (nbmst/khhdon dò chứa, shdon/khmshdon khớp, Range Picker ngày lập → Lọc/Xoá
+lọc). Chức năng mạng phải đăng nhập GDT thật nên không tự chạy được.
 
 ---
 

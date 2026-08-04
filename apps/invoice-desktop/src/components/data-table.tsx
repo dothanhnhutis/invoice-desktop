@@ -1,5 +1,7 @@
 import {
+  Column,
   ColumnDef,
+  ColumnPinningState,
   OnChangeFn,
   PaginationState,
   RowSelectionState,
@@ -8,6 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from "@tanstack/react-table";
+import { cn } from "@/lib/utils";
 
 import {
   Table,
@@ -48,6 +51,31 @@ interface DataTableProps<TData, TValue> {
   rowSelection?: RowSelectionState;
   onRowSelectionChange?: OnChangeFn<RowSelectionState>;
   getRowId?: (row: TData, index: number) => string;
+  /** Ghim cột khi cuộn ngang: { left: [id...], right: [id...] }. Cần type="fixed". */
+  columnPinning?: ColumnPinningState;
+}
+
+/** Style + class sticky cho 1 cột đã ghim (trái/phải). */
+function pinStyle<TData>(column: Column<TData>): React.CSSProperties {
+  const pin = column.getIsPinned();
+  if (!pin) return {};
+  return {
+    position: "sticky",
+    left: pin === "left" ? column.getStart("left") : undefined,
+    right: pin === "right" ? column.getAfter("right") : undefined,
+    zIndex: 1,
+  };
+}
+
+/** Class nền + đường viền ranh cho cột ghim (giữ highlight khi chọn dòng). */
+function pinClass<TData>(column: Column<TData>): string {
+  const pin = column.getIsPinned();
+  if (!pin) return "";
+  return cn(
+    "bg-background group-data-[state=selected]:bg-muted",
+    pin === "left" && column.getIsLastColumn("left") && "border-r",
+    pin === "right" && column.getIsFirstColumn("right") && "border-l",
+  );
 }
 
 const PAGE_SIZES = [10, 20, 30, 40, 50];
@@ -64,6 +92,7 @@ export function DataTable<TData, TValue>({
   rowSelection,
   onRowSelectionChange,
   getRowId,
+  columnPinning,
 }: DataTableProps<TData, TValue>) {
   const manualPagination = pageCount !== undefined;
   const showPagination = manualPagination || enableClientPagination;
@@ -72,16 +101,22 @@ export function DataTable<TData, TValue>({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    enableColumnPinning: true,
+    initialState: {
+      ...(enableClientPagination
+        ? { pagination: { pageIndex: 0, pageSize: 10 } }
+        : {}),
+      ...(columnPinning ? { columnPinning } : {}),
+    },
     ...(enableClientPagination
-      ? {
-          getPaginationRowModel: getPaginationRowModel(),
-          initialState: { pagination: { pageIndex: 0, pageSize: 10 } },
-        }
+      ? { getPaginationRowModel: getPaginationRowModel() }
       : {}),
     ...(manualPagination
       ? { manualPagination: true, pageCount, onPaginationChange }
       : {}),
-    ...(enableRowSelection ? { enableRowSelection: true, getRowId, onRowSelectionChange } : {}),
+    ...(enableRowSelection
+      ? { enableRowSelection: true, getRowId, onRowSelectionChange }
+      : {}),
     state: {
       ...(manualPagination && pagination ? { pagination } : {}),
       ...(enableRowSelection && rowSelection ? { rowSelection } : {}),
@@ -89,9 +124,10 @@ export function DataTable<TData, TValue>({
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 ">
       <div className="rounded-md border ">
         {/* Bề rộng bảng = tổng size cột; tràn khung -> container overflow-x-auto (ui/table) tự cuộn ngang. */}
+        {/* overflow-y-hidden cho container: chặn thanh cuộn dọc thừa do overflow-x-auto ép overflow-y=auto. */}
         <Table
           style={
             type == "fixed"
@@ -106,7 +142,11 @@ export function DataTable<TData, TValue>({
                   return (
                     <TableHead
                       key={header.id}
-                      style={type == "fixed" ? { width: header.getSize() } : {}}
+                      className={pinClass(header.column)}
+                      style={{
+                        ...(type == "fixed" ? { width: header.getSize() } : {}),
+                        ...pinStyle(header.column),
+                      }}
                     >
                       {header.isPlaceholder
                         ? null
@@ -125,15 +165,19 @@ export function DataTable<TData, TValue>({
               table.getRowModel().rows.map((row) => (
                 <TableRow
                   key={row.id}
+                  className="group"
                   data-state={row.getIsSelected() && "selected"}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell
                       key={cell.id}
-                      className="truncate"
-                      style={
-                        type == "fixed" ? { width: cell.column.getSize() } : {}
-                      }
+                      className={cn("truncate", pinClass(cell.column))}
+                      style={{
+                        ...(type == "fixed"
+                          ? { width: cell.column.getSize() }
+                          : {}),
+                        ...pinStyle(cell.column),
+                      }}
                     >
                       {flexRender(
                         cell.column.columnDef.cell,

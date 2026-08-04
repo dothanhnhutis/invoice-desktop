@@ -37,7 +37,7 @@ function ProtectedLayout() {
       <AuthProvider profile={profile}>
         <SidebarProvider>
           <AppSidebar />
-          <SidebarInset>
+          <SidebarInset className="min-w-0">
             <NavHeader />
             <Outlet />
           </SidebarInset>

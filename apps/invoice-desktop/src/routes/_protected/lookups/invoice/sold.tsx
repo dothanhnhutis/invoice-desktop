@@ -5,5 +5,5 @@ export const Route = createFileRoute("/_protected/lookups/invoice/sold")({
 });
 
 function RouteComponent() {
-  return <div>Hello "/_protected/lookups/invoice/sold"!</div>;
+  return <div>Tính năng đang được phát triển.....</div>;
 }
