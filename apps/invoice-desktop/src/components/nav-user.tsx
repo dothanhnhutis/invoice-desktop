@@ -1,10 +1,8 @@
 import {
-  BadgeCheck,
-  Bell,
+  BellIcon,
   ChevronsUpDown,
-  CreditCard,
-  LogOut,
-  Sparkles,
+  LogOutIcon,
+  SettingsIcon,
 } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -113,30 +111,20 @@ export function NavUser() {
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <DropdownMenuItem>
-                  <Sparkles />
-                  Upgrade to Pro
+                  <SettingsIcon />
+                  Cài đặt
                 </DropdownMenuItem>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
+
                 <DropdownMenuItem>
-                  <BadgeCheck />
-                  Account
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <CreditCard />
-                  Billing
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Bell />
-                  Notifications
+                  <BellIcon />
+                  Thông báo
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <AlertDialogTrigger render={<DropdownMenuItem />}>
-                  <LogOut />
-                  Log out
+                  <LogOutIcon />
+                  Đăng xuất
                 </AlertDialogTrigger>
               </DropdownMenuGroup>
             </DropdownMenuContent>

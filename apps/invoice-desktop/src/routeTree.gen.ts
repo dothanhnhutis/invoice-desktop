@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProtectedRouteRouteImport } from './routes/_protected/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ProtectedCoasRouteImport } from './routes/_protected/coas'
+import { Route as ProtectedSettingsNotificationsRouteImport } from './routes/_protected/settings/notifications'
+import { Route as ProtectedSettingsFeatureRouteImport } from './routes/_protected/settings/feature'
 import { Route as ProtectedCoasIdRouteImport } from './routes/_protected/coas_.$id'
 import { Route as ProtectedLookupsInvoiceSoldRouteImport } from './routes/_protected/lookups/invoice/sold'
 import { Route as ProtectedLookupsInvoicePurchaseRouteImport } from './routes/_protected/lookups/invoice/purchase'
@@ -31,6 +33,18 @@ const ProtectedCoasRoute = ProtectedCoasRouteImport.update({
   path: '/coas',
   getParentRoute: () => ProtectedRouteRoute,
 } as any)
+const ProtectedSettingsNotificationsRoute =
+  ProtectedSettingsNotificationsRouteImport.update({
+    id: '/settings/notifications',
+    path: '/settings/notifications',
+    getParentRoute: () => ProtectedRouteRoute,
+  } as any)
+const ProtectedSettingsFeatureRoute =
+  ProtectedSettingsFeatureRouteImport.update({
+    id: '/settings/feature',
+    path: '/settings/feature',
+    getParentRoute: () => ProtectedRouteRoute,
+  } as any)
 const ProtectedCoasIdRoute = ProtectedCoasIdRouteImport.update({
   id: '/coas_/$id',
   path: '/coas/$id',
@@ -59,6 +73,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/coas': typeof ProtectedCoasRoute
   '/coas/$id': typeof ProtectedCoasIdRoute
+  '/settings/feature': typeof ProtectedSettingsFeatureRoute
+  '/settings/notifications': typeof ProtectedSettingsNotificationsRoute
   '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
   '/lookups/invoice/purchase/$id': typeof ProtectedLookupsInvoicePurchaseIdRoute
@@ -67,6 +83,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/coas': typeof ProtectedCoasRoute
   '/coas/$id': typeof ProtectedCoasIdRoute
+  '/settings/feature': typeof ProtectedSettingsFeatureRoute
+  '/settings/notifications': typeof ProtectedSettingsNotificationsRoute
   '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
   '/lookups/invoice/purchase/$id': typeof ProtectedLookupsInvoicePurchaseIdRoute
@@ -77,6 +95,8 @@ export interface FileRoutesById {
   '/_protected': typeof ProtectedRouteRouteWithChildren
   '/_protected/coas': typeof ProtectedCoasRoute
   '/_protected/coas_/$id': typeof ProtectedCoasIdRoute
+  '/_protected/settings/feature': typeof ProtectedSettingsFeatureRoute
+  '/_protected/settings/notifications': typeof ProtectedSettingsNotificationsRoute
   '/_protected/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/_protected/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
   '/_protected/lookups/invoice/purchase_/$id': typeof ProtectedLookupsInvoicePurchaseIdRoute
@@ -87,6 +107,8 @@ export interface FileRouteTypes {
     | '/'
     | '/coas'
     | '/coas/$id'
+    | '/settings/feature'
+    | '/settings/notifications'
     | '/lookups/invoice/purchase'
     | '/lookups/invoice/sold'
     | '/lookups/invoice/purchase/$id'
@@ -95,6 +117,8 @@ export interface FileRouteTypes {
     | '/'
     | '/coas'
     | '/coas/$id'
+    | '/settings/feature'
+    | '/settings/notifications'
     | '/lookups/invoice/purchase'
     | '/lookups/invoice/sold'
     | '/lookups/invoice/purchase/$id'
@@ -104,6 +128,8 @@ export interface FileRouteTypes {
     | '/_protected'
     | '/_protected/coas'
     | '/_protected/coas_/$id'
+    | '/_protected/settings/feature'
+    | '/_protected/settings/notifications'
     | '/_protected/lookups/invoice/purchase'
     | '/_protected/lookups/invoice/sold'
     | '/_protected/lookups/invoice/purchase_/$id'
@@ -135,6 +161,20 @@ declare module '@tanstack/react-router' {
       path: '/coas'
       fullPath: '/coas'
       preLoaderRoute: typeof ProtectedCoasRouteImport
+      parentRoute: typeof ProtectedRouteRoute
+    }
+    '/_protected/settings/notifications': {
+      id: '/_protected/settings/notifications'
+      path: '/settings/notifications'
+      fullPath: '/settings/notifications'
+      preLoaderRoute: typeof ProtectedSettingsNotificationsRouteImport
+      parentRoute: typeof ProtectedRouteRoute
+    }
+    '/_protected/settings/feature': {
+      id: '/_protected/settings/feature'
+      path: '/settings/feature'
+      fullPath: '/settings/feature'
+      preLoaderRoute: typeof ProtectedSettingsFeatureRouteImport
       parentRoute: typeof ProtectedRouteRoute
     }
     '/_protected/coas_/$id': {
@@ -171,6 +211,8 @@ declare module '@tanstack/react-router' {
 interface ProtectedRouteRouteChildren {
   ProtectedCoasRoute: typeof ProtectedCoasRoute
   ProtectedCoasIdRoute: typeof ProtectedCoasIdRoute
+  ProtectedSettingsFeatureRoute: typeof ProtectedSettingsFeatureRoute
+  ProtectedSettingsNotificationsRoute: typeof ProtectedSettingsNotificationsRoute
   ProtectedLookupsInvoicePurchaseRoute: typeof ProtectedLookupsInvoicePurchaseRoute
   ProtectedLookupsInvoiceSoldRoute: typeof ProtectedLookupsInvoiceSoldRoute
   ProtectedLookupsInvoicePurchaseIdRoute: typeof ProtectedLookupsInvoicePurchaseIdRoute
@@ -179,6 +221,8 @@ interface ProtectedRouteRouteChildren {
 const ProtectedRouteRouteChildren: ProtectedRouteRouteChildren = {
   ProtectedCoasRoute: ProtectedCoasRoute,
   ProtectedCoasIdRoute: ProtectedCoasIdRoute,
+  ProtectedSettingsFeatureRoute: ProtectedSettingsFeatureRoute,
+  ProtectedSettingsNotificationsRoute: ProtectedSettingsNotificationsRoute,
   ProtectedLookupsInvoicePurchaseRoute: ProtectedLookupsInvoicePurchaseRoute,
   ProtectedLookupsInvoiceSoldRoute: ProtectedLookupsInvoiceSoldRoute,
   ProtectedLookupsInvoicePurchaseIdRoute:

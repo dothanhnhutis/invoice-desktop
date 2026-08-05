@@ -4,6 +4,8 @@ import {
   BanknoteArrowUpIcon,
   FileTextIcon,
   LayoutDashboardIcon,
+  ReceiptTextIcon,
+  SettingsIcon,
 } from "lucide-react";
 import logo2 from "@/assets/logo2.png";
 import { NavLinkGroup, NavLinkType, NavMain } from "./nav-main";
@@ -21,11 +23,11 @@ import {
 const navMain: (NavLinkType | NavLinkGroup)[] = [
   { icon: LayoutDashboardIcon, title: "Bảng điều khiển", url: "#" },
   {
-    icon: BanknoteArrowUpIcon,
-    title: "Tra cứu",
+    icon: ReceiptTextIcon,
+    title: "Hoá đơn",
     items: [
       {
-        title: "Tra cứu hoá đơn",
+        title: "Tra cứu",
         items: [
           {
             icon: BanknoteArrowUpIcon,
@@ -43,8 +45,13 @@ const navMain: (NavLinkType | NavLinkGroup)[] = [
   },
   {
     icon: FileTextIcon,
-    title: "Certificate of Analysis",
+    title: "Nguyên liệu & COA",
     url: "/coas",
+  },
+  {
+    icon: SettingsIcon,
+    title: "Cài đặt",
+    url: "/settings/notifications",
   },
 ];
 

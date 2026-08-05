@@ -619,6 +619,14 @@ fn push_invoice_conditions(
         sql.push_str(" AND khmshdon = ?");
         args.push(Box::new(khmshdon as i64));
     }
+    if let Some(tthai) = filter.tthai {
+        sql.push_str(" AND tthai = ?");
+        args.push(Box::new(tthai as i64));
+    }
+    if let Some(ttxly) = filter.ttxly {
+        sql.push_str(" AND ttxly = ?");
+        args.push(Box::new(ttxly as i64));
+    }
 }
 
 fn row_to_raw_material(r: &rusqlite::Row) -> Result<RawMaterial> {
@@ -879,6 +887,54 @@ mod tests {
         assert_eq!(
             r.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
             vec!["c"]
+        );
+    }
+
+    #[test]
+    fn query_filters_by_status() {
+        let db = Db::open_in_memory().unwrap();
+        let mut a = inv("a", "2026-01-01", 1.0);
+        a.tthai = 1;
+        a.ttxly = 5;
+        let mut b = inv("b", "2026-02-01", 2.0);
+        b.tthai = 2;
+        b.ttxly = 5;
+        let mut c = inv("c", "2026-03-01", 3.0);
+        c.tthai = 1;
+        c.ttxly = 6;
+        db.upsert_invoices(&[a, b, c]).unwrap();
+
+        // tthai = 1 -> a & c.
+        assert_eq!(
+            db.count_invoices(&InvoiceFilter {
+                tthai: Some(1),
+                ..Default::default()
+            })
+            .unwrap(),
+            2
+        );
+
+        // ttxly = 5 -> a & b.
+        assert_eq!(
+            db.count_invoices(&InvoiceFilter {
+                ttxly: Some(5),
+                ..Default::default()
+            })
+            .unwrap(),
+            2
+        );
+
+        // Kết hợp tthai = 1 + ttxly = 5 -> chỉ a.
+        let r = db
+            .query(&InvoiceFilter {
+                tthai: Some(1),
+                ttxly: Some(5),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            r.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["a"]
         );
     }
 

@@ -101,6 +101,10 @@ pub struct InvoiceFilter {
     pub shdon: Option<u32>,
     /// Ký hiệu mẫu số — khớp chính xác.
     pub khmshdon: Option<u8>,
+    /// Trạng thái hóa đơn — khớp chính xác.
+    pub tthai: Option<u8>,
+    /// Trạng thái xử lý — khớp chính xác.
+    pub ttxly: Option<u8>,
     pub limit: Option<u32>,
     /// Bỏ qua bao nhiêu dòng (phân trang; chỉ áp dụng khi có `limit`).
     pub offset: Option<u32>,

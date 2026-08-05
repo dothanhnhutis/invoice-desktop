@@ -31,7 +31,11 @@ export const Route = createFileRoute("/")({
     const ok = await invoke<boolean>("has_credentials");
     if (!ok) {
       await invoke<boolean>("clear_credentials");
-    } else throw redirect({ to: "/lookups/invoice/purchase" });
+    } else
+      throw redirect({
+        to: "/lookups/invoice/purchase",
+        search: { page: 1, size: 10 },
+      });
   },
   component: RouteComponent,
 });

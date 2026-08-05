@@ -56,7 +56,10 @@ const LoginDialog = () => {
           password: value.password,
         });
         // 3) Vào app; guard _protected pass vì has_credentials giờ = true.
-        navigate({ to: "/lookups/invoice/purchase" });
+        navigate({
+          to: "/lookups/invoice/purchase",
+          search: { page: 1, size: 10 },
+        });
       } catch (e) {
         // invoke reject bằng String (Err của Result<_, String> ở Rust).
         setLoginError(typeof e === "string" ? e : String(e));

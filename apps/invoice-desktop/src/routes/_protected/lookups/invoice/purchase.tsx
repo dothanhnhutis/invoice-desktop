@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSync } from "@/contexts/sync-context";
 import {
   InputGroup,
@@ -32,11 +32,71 @@ import { DataTable } from "@/components/data-table";
 import { vnDateToIso } from "@/lib/date";
 import { api, pickFolder, type Invoice, type Paged } from "@/lib/api";
 import { Input } from "@/components/ui/input";
-import { DateRangePicker } from "@/components/date-range-picker";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DateRangePicker,
+  defaultOneMonthRange,
+} from "@/components/date-range-picker";
 import type { DateRange } from "react-day-picker";
 import { format } from "date-fns";
 
+const PAGE_SIZES = [10, 20, 30, 40, 50];
+
+// Điều kiện lọc + phân trang nằm trên URL → giữ nguyên khi xem chi tiết rồi Back.
+type PurchaseSearch = {
+  nbmst?: string;
+  khhdon?: string;
+  shdon?: number;
+  khmshdon?: number;
+  tthai?: number; // bỏ = "Tất cả"
+  ttxly?: number; // bỏ = mặc định (áp ở searchToApplied)
+  from?: string; // yyyy-MM-dd
+  to?: string; // yyyy-MM-dd
+  page: number; // 1-based cho URL
+  size: number;
+};
+
 export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
+  validateSearch: (s: Record<string, unknown>): PurchaseSearch => {
+    const size = PAGE_SIZES.includes(Number(s.size)) ? Number(s.size) : 10;
+    const page = Number(s.page) >= 1 ? Math.floor(Number(s.page)) : 1;
+    const str = (v: unknown) =>
+      typeof v === "string" && v.trim() ? v.trim() : undefined;
+    const num = (v: unknown) => {
+      const n = Number(v);
+      return String(v ?? "").trim() !== "" && Number.isFinite(n)
+        ? n
+        : undefined;
+    };
+    const isYmd = (v: unknown) =>
+      typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const tthai = tthais.some((o) => o.value === Number(s.tthai))
+      ? Number(s.tthai)
+      : undefined;
+    const ttxly = ttxlys.some((o) => o.value === Number(s.ttxly))
+      ? Number(s.ttxly)
+      : undefined;
+    return {
+      nbmst: str(s.nbmst),
+      khhdon: str(s.khhdon),
+      shdon: num(s.shdon),
+      khmshdon: num(s.khmshdon),
+      tthai,
+      ttxly,
+      from: isYmd(s.from) ? (s.from as string) : undefined,
+      to: isYmd(s.to) ? (s.to as string) : undefined,
+      page,
+      size,
+    };
+  },
   component: RouteComponent,
 });
 
@@ -274,14 +334,92 @@ type AppliedFilter = {
   khhdon?: string;
   shdon?: number;
   khmshdon?: number;
+  tthai?: number;
+  ttxly?: number;
   from?: string;
   to?: string;
 };
+
+const tthais = [
+  { label: "Tất cả", value: null },
+  { label: "Hoá đơn mới", value: 1 },
+  { label: "Hoá đơn thay thế", value: 2 },
+  { label: "Hoá đơn điều chỉnh", value: 3 },
+  { label: "Hoá đơn đã bị thay thế", value: 4 },
+  { label: "Hoá đơn đã bị điều chỉnh", value: 5 },
+  { label: "Hoá đơn đã bị huỷ", value: 6 },
+];
+
+const ttxlys = [
+  { label: "Đã cấp mã hoá đơn", value: 5 },
+  { label: "Cục thuế đã nhận không mã", value: 6 },
+  {
+    label: "Cục Thuế đã nhận hóa đơn có mã khởi tạo từ máy tính tiền",
+    value: 8,
+  },
+];
+
+// Ký hiệu mẫu số hoá đơn (Thông tư 78): 1..6. "Tất cả" = không lọc.
+const khmshdons = [
+  { label: "Tất cả", value: null },
+  { label: "1", value: 1 },
+  { label: "2", value: 2 },
+  { label: "3", value: 3 },
+  { label: "4", value: 4 },
+  { label: "5", value: 5 },
+  { label: "6", value: 6 },
+  { label: "7", value: 7 },
+  { label: "8", value: 8 },
+  { label: "9", value: 9 },
+];
 
 // Ngày (giờ VN) -> ISO biên đầu/cuối ngày để so với ntao (UTC ISO).
 function dayBoundIso(d: Date, end: boolean): string {
   const t = end ? "23:59:59.999" : "00:00:00";
   return new Date(`${format(d, "yyyy-MM-dd")}T${t}+07:00`).toISOString();
+}
+
+// base-ui Select dùng value chuỗi; null ("Tất cả") -> "all".
+const keyOf = (v: number | null) => (v === null ? "all" : String(v));
+const DEFAULT_TTHAI_KEY = keyOf(tthais[0].value);
+const DEFAULT_TTXLY_KEY = keyOf(ttxlys[0].value);
+const DEFAULT_KHMSHDON_KEY = keyOf(khmshdons[0].value);
+
+type FilterInputs = {
+  nbmst: string;
+  khhdon: string;
+  shdon: string;
+};
+
+// yyyy-MM-dd -> Date (đầu ngày, giờ máy) để hiển thị trên DateRangePicker.
+function parseYmd(s?: string): Date | undefined {
+  return s ? new Date(`${s}T00:00:00`) : undefined;
+}
+
+// Khoảng ngày từ URL; nếu trống hoàn toàn -> khoảng mặc định (today lùi ~1 tháng).
+function searchToRange(s: PurchaseSearch): DateRange {
+  const from = parseYmd(s.from);
+  const to = parseYmd(s.to);
+  return from || to ? { from, to } : defaultOneMonthRange();
+}
+
+// AppliedFilter thật sự cho query, suy từ URL (ttxly mặc định = phần tử đầu).
+function searchToApplied(s: PurchaseSearch): AppliedFilter {
+  const range = searchToRange(s);
+  return {
+    nbmst: s.nbmst,
+    khhdon: s.khhdon,
+    shdon: s.shdon,
+    khmshdon: s.khmshdon,
+    tthai: s.tthai,
+    ttxly: s.ttxly ?? (ttxlys[0].value as number),
+    from: range.from ? dayBoundIso(range.from, false) : undefined,
+    to: range.to
+      ? dayBoundIso(range.to, true)
+      : range.from
+        ? dayBoundIso(range.from, true)
+        : undefined,
+  };
 }
 
 const formSchema = z.object({
@@ -292,32 +430,47 @@ const formSchema = z.object({
 
 function RouteComponent() {
   const { progress, error } = useSync(); // tiến độ/lỗi realtime (listener toàn cục ở __root)
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: 10,
-  });
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+
+  // Phân trang + filter đã áp dụng suy từ URL (giữ khi Back/refresh).
+  const pagination: PaginationState = {
+    pageIndex: search.page - 1,
+    pageSize: search.size,
+  };
+  const applied = useMemo(() => searchToApplied(search), [search]);
+
   // Chọn dòng theo id (giữ được qua các trang nhờ getRowId = id).
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [downloading, setDownloading] = useState(false);
 
-  // Ô nhập filter (chưa áp dụng) + filter đã áp dụng (dùng cho query).
-  const [filterInputs, setFilterInputs] = useState({
-    nbmst: "",
-    khhdon: "",
-    shdon: "",
-    khmshdon: "",
-  });
-  const [range, setRange] = useState<DateRange | undefined>();
-  const [applied, setApplied] = useState<AppliedFilter>({});
+  // Ô nhập/chọn filter chưa áp dụng (cục bộ) — init từ URL để khôi phục khi Back.
+  const [filterInputs, setFilterInputs] = useState<FilterInputs>(() => ({
+    nbmst: search.nbmst ?? "",
+    khhdon: search.khhdon ?? "",
+    shdon: search.shdon != null ? String(search.shdon) : "",
+  }));
+  // 3 filter bắt buộc luôn có giá trị: khoảng ngày + 2 select trạng thái (mặc định phần tử đầu).
+  const [range, setRange] = useState<DateRange>(() => searchToRange(search));
+  const [tthaiKey, setTthaiKey] = useState<string>(
+    search.tthai != null ? String(search.tthai) : DEFAULT_TTHAI_KEY,
+  );
+  const [ttxlyKey, setTtxlyKey] = useState<string>(
+    search.ttxly != null ? String(search.ttxly) : DEFAULT_TTXLY_KEY,
+  );
+  // Ký hiệu mẫu số (tùy chọn) — Select có "Tất cả"; init từ URL để khôi phục khi Back.
+  const [khmshdonKey, setKhmshdonKey] = useState<string>(
+    search.khmshdon != null ? String(search.khmshdon) : DEFAULT_KHMSHDON_KEY,
+  );
 
   const invoices = useQuery({
-    queryKey: ["invoices", pagination.pageIndex, pagination.pageSize, applied],
+    queryKey: ["invoices", search.page, search.size, applied],
     // Phân trang phía server: chỉ tải đúng 1 trang + tổng số.
     queryFn: async () =>
       invoke<Paged<Invoice>>("list_invoices", {
         filter: {
-          limit: pagination.pageSize,
-          offset: pagination.pageIndex * pagination.pageSize,
+          limit: search.size,
+          offset: (search.page - 1) * search.size,
           ...applied,
         },
       }),
@@ -353,32 +506,35 @@ function RouteComponent() {
 
   const selectedIds = Object.keys(rowSelection).filter((k) => rowSelection[k]);
 
-  // Áp dụng filter: dựng AppliedFilter từ ô nhập + khoảng ngày, về trang 1.
+  // Áp dụng filter: ghi điều kiện lên URL (về trang 1). applied/query tự cập nhật theo search.
   const applyFilter = () => {
-    const shdon = filterInputs.shdon.trim() ? Number(filterInputs.shdon.trim()) : undefined;
-    const khmshdon = filterInputs.khmshdon.trim()
-      ? Number(filterInputs.khmshdon.trim())
+    const shdon = filterInputs.shdon.trim()
+      ? Number(filterInputs.shdon.trim())
       : undefined;
-    setApplied({
-      nbmst: filterInputs.nbmst.trim() || undefined,
-      khhdon: filterInputs.khhdon.trim() || undefined,
-      shdon: Number.isFinite(shdon) ? shdon : undefined,
-      khmshdon: Number.isFinite(khmshdon) ? khmshdon : undefined,
-      from: range?.from ? dayBoundIso(range.from, false) : undefined,
-      to: range?.to
-        ? dayBoundIso(range.to, true)
-        : range?.from
-          ? dayBoundIso(range.from, true)
-          : undefined,
+    navigate({
+      search: (p) => ({
+        ...p,
+        nbmst: filterInputs.nbmst.trim() || undefined,
+        khhdon: filterInputs.khhdon.trim() || undefined,
+        shdon: Number.isFinite(shdon) ? shdon : undefined,
+        khmshdon: khmshdonKey === "all" ? undefined : Number(khmshdonKey),
+        tthai: tthaiKey === "all" ? undefined : Number(tthaiKey),
+        ttxly: ttxlyKey ? Number(ttxlyKey) : undefined,
+        from: range.from ? format(range.from, "yyyy-MM-dd") : undefined,
+        to: range.to ? format(range.to, "yyyy-MM-dd") : undefined,
+        page: 1,
+      }),
     });
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
+  // Xoá lọc: về mặc định (xoá param lọc; 3 filter bắt buộc vẫn có giá trị mặc định).
   const clearFilter = () => {
-    setFilterInputs({ nbmst: "", khhdon: "", shdon: "", khmshdon: "" });
-    setRange(undefined);
-    setApplied({});
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
+    setFilterInputs({ nbmst: "", khhdon: "", shdon: "" });
+    setRange(defaultOneMonthRange());
+    setTthaiKey(DEFAULT_TTHAI_KEY);
+    setTtxlyKey(DEFAULT_TTXLY_KEY);
+    setKhmshdonKey(DEFAULT_KHMSHDON_KEY);
+    navigate({ search: { page: 1, size: search.size } });
   };
 
   // Tải hàng loạt: chọn thư mục -> gọi backend -> toast kết quả.
@@ -403,27 +559,32 @@ function RouteComponent() {
     }
   };
 
-  // Đổi số dòng/trang -> về trang đầu.
+  // Đổi số dòng/trang -> ghi lên URL (đổi size thì về trang 1).
   const onPaginationChange: OnChangeFn<PaginationState> = (updater) => {
-    setPagination((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      return next.pageSize !== prev.pageSize ? { ...next, pageIndex: 0 } : next;
+    const next = typeof updater === "function" ? updater(pagination) : updater;
+    const sizeChanged = next.pageSize !== pagination.pageSize;
+    navigate({
+      search: (p) => ({
+        ...p,
+        size: next.pageSize,
+        page: sizeChanged ? 1 : next.pageIndex + 1,
+      }),
     });
   };
 
   // Kẹp trang khi tổng co lại (vd sau prune) để không hiện trang trống.
   useEffect(() => {
-    if (pagination.pageIndex > pageCount - 1) {
-      setPagination((p) => ({ ...p, pageIndex: pageCount - 1 }));
+    if (search.page > pageCount) {
+      navigate({ replace: true, search: (p) => ({ ...p, page: pageCount }) });
     }
-  }, [pageCount, pagination.pageIndex]);
+  }, [pageCount, search.page, navigate]);
 
   const lastSync = sync.data?.last_sync_at
     ? new Date(sync.data.last_sync_at * 1000).toLocaleString()
     : "chưa";
 
   return (
-    <div className="container mx-auto py-10">
+    <div className="container @container mx-auto py-10">
       <div className="flex flex-1 flex-col gap-4 p-4">
         {error && (
           <div className="rounded-xl border border-red-500 bg-red-500/10 p-3 text-sm text-red-500">
@@ -447,10 +608,7 @@ function RouteComponent() {
             {sync.data?.newest_date ?? "?"}
           </p>
           <p>Đồng bộ gần nhất: {lastSync}</p>
-          <p>
-            Tổng: <b>{total}</b> hóa đơn · trang{" "}
-            <b>{Math.min(pagination.pageIndex + 1, pageCount)}</b>/{pageCount}
-          </p>
+
           {invoices.isError && (
             <p className="text-red-500">
               Lỗi list_invoices: {String(invoices.error)}
@@ -503,8 +661,63 @@ function RouteComponent() {
         </form>
 
         {/* Thanh lọc: MST bên bán, ký hiệu HĐ, số HĐ, ký hiệu mẫu số, khoảng ngày lập. */}
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="flex flex-col gap-1">
+        <div className="grid @3xl:grid-cols-6 gap-2">
+          <div className="flex flex-col gap-1 @3xl:col-span-2">
+            <label className="text-xs text-muted-foreground after:ml-0.5 after:text-red-500 after:content-['*']">
+              Thời gian lập
+            </label>
+            <DateRangePicker
+              value={range}
+              onChange={(r) => {
+                if (r?.from) setRange(r);
+              }}
+            />
+          </div>
+          <div className="flex flex-col gap-1 @3xl:col-span-2">
+            <label className="text-xs text-muted-foreground after:ml-0.5 after:text-red-500 after:content-['*']">
+              Trạng thái HĐ
+            </label>
+            <Select value={tthaiKey} onValueChange={(v) => v && setTthaiKey(v)}>
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(v) => tthais.find((o) => keyOf(o.value) === v)?.label}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel> Trạng thái HĐ</SelectLabel>
+                  {tthais.map((o) => (
+                    <SelectItem key={keyOf(o.value)} value={keyOf(o.value)}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1 @3xl:col-span-2">
+            <label className="text-xs text-muted-foreground after:ml-0.5 after:text-red-500 after:content-['*']">
+              Trạng thái xử lý
+            </label>
+            <Select value={ttxlyKey} onValueChange={(v) => v && setTtxlyKey(v)}>
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(v) => ttxlys.find((o) => keyOf(o.value) === v)?.label}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>Trạng thái xử lý</SelectLabel>
+                  {ttxlys.map((o) => (
+                    <SelectItem key={keyOf(o.value)} value={keyOf(o.value)}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1 @3xl:col-span-3">
             <label className="text-xs text-muted-foreground">MST bên bán</label>
             <Input
               value={filterInputs.nbmst}
@@ -512,21 +725,34 @@ function RouteComponent() {
                 setFilterInputs((s) => ({ ...s, nbmst: e.target.value }))
               }
               placeholder="MST bên bán"
-              className="w-40"
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">Ký hiệu HĐ</label>
-            <Input
-              value={filterInputs.khhdon}
-              onChange={(e) =>
-                setFilterInputs((s) => ({ ...s, khhdon: e.target.value }))
-              }
-              placeholder="VD: C26TAA"
-              className="w-32"
-            />
+          <div className="flex flex-col gap-1 @3xl:col-span-3">
+            <label className="text-xs text-muted-foreground">
+              Ký hiệu mẫu số
+            </label>
+            <Select
+              value={khmshdonKey}
+              onValueChange={(v) => v && setKhmshdonKey(v)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(v) => khmshdons.find((o) => keyOf(o.value) === v)?.label}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>Ký hiệu mẫu số</SelectLabel>
+                  {khmshdons.map((o) => (
+                    <SelectItem key={keyOf(o.value)} value={keyOf(o.value)}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 @3xl:col-span-3">
             <label className="text-xs text-muted-foreground">Số HĐ</label>
             <Input
               value={filterInputs.shdon}
@@ -535,47 +761,39 @@ function RouteComponent() {
               }
               inputMode="numeric"
               placeholder="Số HĐ"
-              className="w-28"
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">
-              Ký hiệu mẫu số
-            </label>
+          <div className="flex flex-col gap-1 @3xl:col-span-3">
+            <label className="text-xs text-muted-foreground">Ký hiệu HĐ</label>
             <Input
-              value={filterInputs.khmshdon}
+              value={filterInputs.khhdon}
               onChange={(e) =>
-                setFilterInputs((s) => ({ ...s, khmshdon: e.target.value }))
+                setFilterInputs((s) => ({ ...s, khhdon: e.target.value }))
               }
-              inputMode="numeric"
-              placeholder="VD: 1"
-              className="w-28"
+              placeholder="VD: C26TAA"
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">
-              Thời gian lập
-            </label>
-            <DateRangePicker value={range} onChange={setRange} />
-          </div>
-          <Button variant="secondary" onClick={applyFilter}>
-            Lọc
-          </Button>
-          <Button variant="ghost" onClick={clearFilter}>
-            Xoá lọc
-          </Button>
         </div>
 
-        <div className="flex items-center justify-end">
-          <Button
-            variant="secondary"
-            disabled={!selectedIds.length || downloading}
-            onClick={downloadSelected}
-          >
-            {downloading && <Spinner />}
-            <DownloadIcon />
-            Tải xuống ({selectedIds.length})
-          </Button>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-muted-foreground text-sm">Có {total} kết quả</p>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={applyFilter}>
+              Lọc
+            </Button>
+            <Button variant="ghost" onClick={clearFilter}>
+              Xoá lọc
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={!selectedIds.length || downloading}
+              onClick={downloadSelected}
+            >
+              {downloading && <Spinner />}
+              <DownloadIcon />
+              Tải xuống ({selectedIds.length})
+            </Button>
+          </div>
         </div>
 
         <DataTable
