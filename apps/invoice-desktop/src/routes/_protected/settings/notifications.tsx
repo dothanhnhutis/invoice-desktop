@@ -5,5 +5,5 @@ export const Route = createFileRoute("/_protected/settings/notifications")({
 });
 
 function RouteComponent() {
-  return <div>Hello "/_protected/settings/notifications"!</div>;
+  return <div>Tính năng đang phát triển</div>;
 }

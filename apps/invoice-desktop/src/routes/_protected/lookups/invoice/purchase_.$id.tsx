@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import { useState } from "react";
@@ -19,6 +19,16 @@ import {
 export const Route = createFileRoute(
   "/_protected/lookups/invoice/purchase_/$id",
 )({
+  // Module hoá đơn tắt → chặn, đẩy sang Cài đặt tính năng.
+  beforeLoad: async () => {
+    let ok = false;
+    try {
+      ok = await api.getFeatureInvoice();
+    } catch {
+      /* lỗi lệnh -> coi như chưa bật */
+    }
+    if (!ok) throw redirect({ to: "/settings/features" });
+  },
   component: RouteComponent,
 });
 

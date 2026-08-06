@@ -297,6 +297,17 @@ impl Db {
         conn.execute("DELETE FROM invoices WHERE ntao < ?1", params![date])
     }
 
+    /// Xóa hóa đơn + reset sync_state NHƯNG GIỮ settings (floor, cờ tính năng).
+    /// Dùng khi tắt module hoá đơn.
+    pub fn clear_invoices(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
+            "DELETE FROM invoices; \
+             UPDATE sync_state SET oldest_date=NULL, newest_date=NULL, \
+                 backfill_done=0, last_sync_at=NULL WHERE id=1;",
+        )
+    }
+
     /// Xóa toàn bộ dữ liệu cục bộ: hóa đơn, mọi setting (gồm floor), và reset
     /// sync_state. Dùng khi đăng xuất. Giữ nguyên schema/bảng, chỉ xóa nội dung.
     pub fn clear_all(&self) -> Result<()> {
@@ -310,6 +321,16 @@ impl Db {
     }
 
     // ---- Nguyên liệu (raw_materials) ----------------------------------------
+
+    /// Xoá CỨNG toàn bộ nguyên liệu + COA (khi tắt module). coas cascade theo FK
+    /// nhưng vẫn xoá tường minh cho chắc; reset cả AUTOINCREMENT.
+    pub fn delete_all_raw_materials_and_coas(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
+            "DELETE FROM coas; DELETE FROM raw_materials; \
+             DELETE FROM sqlite_sequence WHERE name IN ('coas','raw_materials');",
+        )
+    }
 
     /// Chèn nguyên liệu mới. Trả `id` vừa sinh.
     pub fn insert_raw_material(&self, m: &NewRawMaterial) -> Result<i64> {
@@ -951,6 +972,28 @@ mod tests {
     }
 
     #[test]
+    fn clear_invoices_wipes_invoices_but_keeps_settings() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_invoices(&[
+            inv("a", "2023-01-01", 1.0),
+            inv("b", "2023-02-01", 2.0),
+        ])
+        .unwrap();
+        db.set_setting("floor", "2023-06-01").unwrap();
+        db.set_setting("feature_raw_materials", "0").unwrap();
+
+        db.clear_invoices().unwrap();
+
+        assert_eq!(db.count_invoices(&InvoiceFilter::default()).unwrap(), 0);
+        // Settings GIỮ nguyên.
+        assert_eq!(db.get_setting("floor").unwrap().as_deref(), Some("2023-06-01"));
+        assert_eq!(
+            db.get_setting("feature_raw_materials").unwrap().as_deref(),
+            Some("0")
+        );
+    }
+
+    #[test]
     fn delete_invoices_before_prunes_older_only() {
         let db = Db::open_in_memory().unwrap();
         // date lưu dạng ISO tdlap; prune theo YYYY-MM-DD.
@@ -1043,6 +1086,23 @@ mod tests {
         assert!(coas.iter().all(|c| c.raw_material_id == rm));
         // COA của nguyên liệu khác không lẫn.
         assert_eq!(db.list_coas(other).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn delete_all_raw_materials_and_coas_wipes_everything() {
+        let db = Db::open_in_memory().unwrap();
+        let rm = db.insert_raw_material(&new_rm("ICHRM-0248", "Bakuchiol")).unwrap();
+        db.insert_coa(&new_coa(rm, "LOT-1")).unwrap();
+        db.insert_coa(&new_coa(rm, "LOT-2")).unwrap();
+
+        db.delete_all_raw_materials_and_coas().unwrap();
+
+        assert_eq!(
+            db.list_raw_materials(&RawMaterialFilter::default()).unwrap().len(),
+            0
+        );
+        assert!(db.get_raw_material(rm).unwrap().is_none());
+        assert_eq!(db.list_coas(rm).unwrap().len(), 0);
     }
 
     #[test]

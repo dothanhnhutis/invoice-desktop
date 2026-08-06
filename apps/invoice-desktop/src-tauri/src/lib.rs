@@ -35,6 +35,8 @@ pub struct AppState {
     wake: tokio::sync::Notify,
     /// Chặn auto-login sau khi sai mật khẩu/bị khóa (tránh khóa tài khoản).
     auth_blocked: AtomicBool,
+    /// Luồng nền đang chạy 1 lượt đồng bộ (khóa cập nhật floor/mật khẩu ở UI).
+    syncing: AtomicBool,
 }
 
 /// Đăng nhập hoadondietu: tự giải captcha, trả token (JWT ~1 ngày) và cache lại.
@@ -66,6 +68,18 @@ async fn logout(state: State<'_, AppState>) -> Result<(), String> {
     // 4. Xóa toàn bộ dữ liệu cục bộ (hóa đơn, floor + settings, sync_state).
     state.db.clear_all().map_err(|e| e.to_string())?;
     // 5. Đánh thức luồng sync để nó kiểm tra lại và vào idle.
+    state.wake.notify_one();
+    Ok(())
+}
+
+/// Tắt module hoá đơn: xóa credential/token + xóa hóa đơn (GIỮ settings), dừng sync.
+/// Khác `logout` ở chỗ KHÔNG `clear_all` (giữ floor + cờ tính năng khác).
+#[tauri::command]
+async fn disable_invoices(state: State<'_, AppState>) -> Result<(), String> {
+    state.auth_blocked.store(true, Ordering::Relaxed);
+    *state.token.lock().await = None;
+    secrets::clear().map_err(|e| e.to_string())?;
+    state.db.clear_invoices().map_err(|e| e.to_string())?;
     state.wake.notify_one();
     Ok(())
 }
@@ -103,6 +117,18 @@ fn clear_credentials() -> Result<(), String> {
 #[tauri::command]
 fn has_credentials() -> bool {
     secrets::load().is_some()
+}
+
+/// MST đã lưu trong keychain (hiển thị ở Cài đặt). None nếu chưa đăng nhập.
+#[tauri::command]
+fn get_username() -> Option<String> {
+    secrets::load().map(|(u, _)| u)
+}
+
+/// Luồng nền có đang chạy 1 lượt đồng bộ không (UI khóa form cập nhật khi true).
+#[tauri::command]
+fn is_syncing(state: State<'_, AppState>) -> bool {
+    state.syncing.load(Ordering::Relaxed)
 }
 
 /// Tiến độ đồng bộ hiện tại.
@@ -1056,6 +1082,10 @@ fn get_floor(state: State<'_, AppState>) -> Result<String, String> {
 /// - Muộn hơn cũ → xóa hóa đơn cũ hơn FLOOR mới + kéo mốc oldest lên.
 #[tauri::command]
 fn set_floor(state: State<'_, AppState>, date: String) -> Result<(), String> {
+    // Đang đồng bộ: luồng nền giữ bản sync_state cũ trong RAM và sẽ ghi đè -> chặn.
+    if state.syncing.load(Ordering::Relaxed) {
+        return Err("Đang đồng bộ, vui lòng thử lại sau khi đồng bộ xong".into());
+    }
     let new_d = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|_| "ngày phải dạng YYYY-MM-DD".to_string())?;
     if new_d > chrono::Local::now().date_naive() {
@@ -1095,6 +1125,41 @@ fn set_floor(state: State<'_, AppState>, date: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Cờ bật/tắt module Quản lý nguyên liệu & COA. Absent = bật (mặc định).
+#[tauri::command]
+fn get_feature_raw_materials(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state
+        .db
+        .get_setting("feature_raw_materials")
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some("0"))
+}
+
+/// Bật/tắt module nguyên liệu & COA. Khi TẮT (`enabled=false`): xoá toàn bộ file COA
+/// trên đĩa + dữ liệu raw_materials/coas (không khôi phục được) rồi lưu cờ.
+#[tauri::command]
+fn set_feature_raw_materials(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    if !enabled {
+        // Xoá cả thư mục coa (best-effort) — mọi file COA chỉ nằm ở đây.
+        if let Ok(base) = app.path().app_data_dir() {
+            let _ = std::fs::remove_dir_all(base.join("coa"));
+        }
+        state
+            .db
+            .delete_all_raw_materials_and_coas()
+            .map_err(|e| e.to_string())?;
+    }
+    state
+        .db
+        .set_setting("feature_raw_materials", if enabled { "1" } else { "0" })
+        .map_err(|e| e.to_string())
+}
+
 /// Nạp Solver từ template đã bundle (production) hoặc thư mục dev (fallback).
 fn load_solver(app: &tauri::App) -> Result<Solver, Box<dyn std::error::Error>> {
     let dir = app
@@ -1129,6 +1194,7 @@ pub fn run() {
                 db,
                 wake: tokio::sync::Notify::new(),
                 auth_blocked: AtomicBool::new(false),
+                syncing: AtomicBool::new(false),
             });
             // Luồng đồng bộ nền (tự chờ tới khi có credential).
             tauri::async_runtime::spawn(sync::run(app.handle().clone()));
@@ -1141,6 +1207,8 @@ pub fn run() {
             set_credentials,
             clear_credentials,
             has_credentials,
+            get_username,
+            is_syncing,
             get_sync_status,
             list_invoices,
             get_invoice_detail,
@@ -1161,6 +1229,9 @@ pub fn run() {
             download_coas_from_csv,
             get_floor,
             set_floor,
+            get_feature_raw_materials,
+            set_feature_raw_materials,
+            disable_invoices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

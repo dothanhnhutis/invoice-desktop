@@ -61,7 +61,7 @@ async function probe(url: string, timeoutMs: number): Promise<boolean> {
  * ```
  */
 export function useOnline(options: UseOnlineOptions = {}) {
-  const { probeUrl, timeoutMs = 5_000, retryDelayMs = 2_000 } = options;
+  const { probeUrl, timeoutMs = 5_000 } = options;
 
   const [status, setStatus] = React.useState<NetworkStatus>("online");
 

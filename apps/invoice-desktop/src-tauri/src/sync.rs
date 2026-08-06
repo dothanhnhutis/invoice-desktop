@@ -10,10 +10,10 @@ use chrono::{Datelike, Local, Months, NaiveDate, Utc};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{AppState, secrets};
+use crate::{secrets, AppState};
 
 /// Mốc dừng backfill mặc định khi user chưa đặt (setting `floor`).
-pub const DEFAULT_FLOOR: &str = "2022-01-01";
+pub const DEFAULT_FLOOR: &str = "2026-01-01";
 /// Nghỉ giữa các request (tránh rate-limit + an toàn tài khoản).
 const THROTTLE: Duration = Duration::from_millis(800);
 /// Chu kỳ đồng bộ tăng dần khi đã backfill xong.
@@ -50,7 +50,12 @@ pub async fn run(app: AppHandle) {
             continue;
         }
 
-        let next_wait = match sync_once(&app).await {
+        // Cờ "đang chạy" cho UI (khóa cập nhật floor/mật khẩu); luôn hạ sau khi xong.
+        set_busy(&app, true);
+        let result = sync_once(&app).await;
+        set_busy(&app, false);
+
+        let next_wait = match result {
             Ok(()) => INCREMENTAL_INTERVAL,
             Err(SyncError::Auth) => {
                 app.state::<AppState>()
@@ -183,7 +188,13 @@ async fn ensure_token(state: &AppState) -> Result<String, SyncError> {
     Ok(token)
 }
 
-fn emit_progress(app: &AppHandle, state: &AppState, phase: &'static str, ss: &domain::SyncState, saved: usize) {
+fn emit_progress(
+    app: &AppHandle,
+    state: &AppState,
+    phase: &'static str,
+    ss: &domain::SyncState,
+    saved: usize,
+) {
     let payload = SyncProgress {
         phase,
         oldest: ss.oldest_date.clone(),
@@ -192,6 +203,14 @@ fn emit_progress(app: &AppHandle, state: &AppState, phase: &'static str, ss: &do
         total_in_db: state.db.count().unwrap_or(0),
     };
     let _ = app.emit("sync://progress", payload);
+}
+
+/// Bật/tắt cờ đang đồng bộ + báo cho UI (event `sync://busy`).
+fn set_busy(app: &AppHandle, busy: bool) {
+    app.state::<AppState>()
+        .syncing
+        .store(busy, Ordering::Relaxed);
+    let _ = app.emit("sync://busy", busy);
 }
 
 fn emit_error(app: &AppHandle, msg: &str) {

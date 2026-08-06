@@ -1,14 +1,8 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
-import { useSync } from "@/contexts/sync-context";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from "@/components/ui/input-group";
-import { CalendarSyncIcon, DownloadIcon, EllipsisIcon } from "lucide-react";
+import { DownloadIcon, EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,8 +13,6 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import * as z from "zod";
-import { useForm } from "@tanstack/react-form";
 import { Spinner } from "@/components/ui/spinner";
 import {
   ColumnDef,
@@ -29,7 +21,6 @@ import {
   RowSelectionState,
 } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
-import { vnDateToIso } from "@/lib/date";
 import { api, pickFolder, type Invoice, type Paged } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import {
@@ -65,6 +56,16 @@ type PurchaseSearch = {
 };
 
 export const Route = createFileRoute("/_protected/lookups/invoice/purchase")({
+  // Module hoá đơn tắt (chưa đăng nhập GDT) → chặn, đẩy sang Cài đặt tính năng.
+  beforeLoad: async () => {
+    let ok = false;
+    try {
+      ok = await api.getFeatureInvoice();
+    } catch {
+      /* lỗi lệnh -> coi như chưa bật */
+    }
+    if (!ok) throw redirect({ to: "/settings/features" });
+  },
   validateSearch: (s: Record<string, unknown>): PurchaseSearch => {
     const size = PAGE_SIZES.includes(Number(s.size)) ? Number(s.size) : 10;
     const page = Number(s.page) >= 1 ? Math.floor(Number(s.page)) : 1;
@@ -321,13 +322,6 @@ export const columns: ColumnDef<Invoice>[] = [
   },
 ];
 
-type SyncState = {
-  oldest_date: string | null;
-  newest_date: string | null;
-  backfill_done: boolean;
-  last_sync_at: number | null;
-};
-
 // Bộ lọc đã áp dụng (khớp InvoiceFilter phía Rust; bỏ field rỗng).
 type AppliedFilter = {
   nbmst?: string;
@@ -362,15 +356,22 @@ const ttxlys = [
 // Ký hiệu mẫu số hoá đơn (Thông tư 78): 1..6. "Tất cả" = không lọc.
 const khmshdons = [
   { label: "Tất cả", value: null },
-  { label: "1", value: 1 },
-  { label: "2", value: 2 },
-  { label: "3", value: 3 },
-  { label: "4", value: 4 },
-  { label: "5", value: 5 },
-  { label: "6", value: 6 },
-  { label: "7", value: 7 },
-  { label: "8", value: 8 },
-  { label: "9", value: 9 },
+  { label: "(1) Hóa đơn điện tử giá trị gia tăng", value: 1 },
+  { label: "(2) Hóa đơn điện tử bán hàng", value: 2 },
+  { label: "(3) Hóa đơn điện tử bán tài sản công", value: 3 },
+  { label: "(4) Hóa đơn điện tử bán hàng dự trữ quốc gia", value: 4 },
+  { label: "(5) Hóa đơn điện tử khác", value: 5 },
+  { label: "(6) Chứng từ điện tử", value: 6 },
+  { label: "(7) Hóa đơn thương mại điện tử", value: 7 },
+  {
+    label:
+      "(8) Hóa đơn giá trị gia tăng tích hợp biên lai thu thuế, phí, lệ phí",
+    value: 8,
+  },
+  {
+    label: "(9) Hóa đơn bán hàng tích hợp biên lai thu thuế, phí, lệ phí",
+    value: 9,
+  },
 ];
 
 // Ngày (giờ VN) -> ISO biên đầu/cuối ngày để so với ntao (UTC ISO).
@@ -422,14 +423,7 @@ function searchToApplied(s: PurchaseSearch): AppliedFilter {
   };
 }
 
-const formSchema = z.object({
-  floor: z
-    .string()
-    .refine((v) => vnDateToIso(v) !== null, "Ngày dạng dd/mm/yyyy"),
-});
-
 function RouteComponent() {
-  const { progress, error } = useSync(); // tiến độ/lỗi realtime (listener toàn cục ở __root)
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
 
@@ -476,29 +470,6 @@ function RouteComponent() {
       }),
     placeholderData: keepPreviousData,
     refetchInterval: 3000,
-  });
-
-  const sync = useQuery({
-    queryKey: ["sync_status"],
-    queryFn: async () => invoke<SyncState>("get_sync_status"),
-    refetchInterval: 3000,
-  });
-
-  const form = useForm({
-    defaultValues: {
-      floor: "",
-    },
-    validators: {
-      onSubmit: formSchema,
-    },
-    onSubmit: async ({ value }) => {
-      try {
-        // FLOOR lưu ISO; form nhập dd/mm/yyyy nên đổi trước khi gửi.
-        await invoke("set_floor", { date: vnDateToIso(value.floor)! });
-      } catch (e) {
-        console.log(e);
-      }
-    },
   });
 
   const total = invoices.data?.total ?? 0;
@@ -579,86 +550,14 @@ function RouteComponent() {
     }
   }, [pageCount, search.page, navigate]);
 
-  const lastSync = sync.data?.last_sync_at
-    ? new Date(sync.data.last_sync_at * 1000).toLocaleString()
-    : "chưa";
-
   return (
     <div className="container @container mx-auto py-10">
       <div className="flex flex-1 flex-col gap-4 p-4">
-        {error && (
+        {invoices.isError && (
           <div className="rounded-xl border border-red-500 bg-red-500/10 p-3 text-sm text-red-500">
-            {error}
+            Lỗi tải danh sách hoá đơn: {String(invoices.error)}
           </div>
         )}
-        {progress && !error && (
-          <div className="rounded-xl border p-3 text-sm text-muted-foreground">
-            Đang đồng bộ ({progress.phase}) · lưu lượt này: {progress.saved} ·
-            tổng: {progress.total_in_db}
-          </div>
-        )}
-
-        <div className="rounded-xl border p-4 text-sm">
-          <p>
-            Backfill xong:{" "}
-            <b>{sync.data ? String(sync.data.backfill_done) : "…"}</b>
-          </p>
-          <p>
-            Khoảng đã tải: {sync.data?.oldest_date ?? "?"} →{" "}
-            {sync.data?.newest_date ?? "?"}
-          </p>
-          <p>Đồng bộ gần nhất: {lastSync}</p>
-
-          {invoices.isError && (
-            <p className="text-red-500">
-              Lỗi list_invoices: {String(invoices.error)}
-            </p>
-          )}
-        </div>
-
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            form.handleSubmit();
-          }}
-        >
-          <InputGroup>
-            <form.Field
-              name="floor"
-              children={(field) => {
-                return (
-                  <InputGroupInput
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    required
-                    placeholder="dd/mm/yyyy"
-                  />
-                );
-              }}
-            />
-            <InputGroupAddon>
-              <CalendarSyncIcon />
-            </InputGroupAddon>
-            <InputGroupAddon align="inline-end">
-              <form.Subscribe
-                selector={(state) => [state.canSubmit, state.isSubmitting]}
-                children={([canSubmit, isSubmitting]) => (
-                  <Button
-                    type="submit"
-                    disabled={!canSubmit}
-                    className="w-full"
-                  >
-                    {isSubmitting && <Spinner />}
-                    Lưu & Đồng bộ
-                  </Button>
-                )}
-              />
-            </InputGroupAddon>
-          </InputGroup>
-        </form>
 
         {/* Thanh lọc: MST bên bán, ký hiệu HĐ, số HĐ, ký hiệu mẫu số, khoảng ngày lập. */}
         <div className="grid @3xl:grid-cols-6 gap-2">

@@ -189,6 +189,14 @@ export type CoaBulkResult = {
   errors: { file_name: string; reason: string }[];
 };
 
+// Khớp struct SyncState phía Rust (get_sync_status).
+export type SyncState = {
+  oldest_date: string | null;
+  newest_date: string | null;
+  backfill_done: boolean;
+  last_sync_at: number | null; // epoch giây
+};
+
 export type ExportResult = {
   downloaded: number;
   path: string | null;
@@ -239,4 +247,31 @@ export const api = {
   /** Tải COA theo danh sách CSV (code, lot_no, [manufacture_date], [expiration_date]). */
   downloadCoasFromCsv: (csvBytes: number[], baseName?: string) =>
     call<ExportResult>("download_coas_from_csv", { csvBytes, baseName }),
+  /** Cờ bật/tắt module Quản lý nguyên liệu & COA. */
+  getFeatureRawMaterials: () => call<boolean>("get_feature_raw_materials"),
+  /** Bật/tắt module. Khi tắt (false) backend xoá hết dữ liệu + file COA. */
+  setFeatureRawMaterials: (enabled: boolean) =>
+    call<void>("set_feature_raw_materials", { enabled }),
+  /** Cờ bật module hoá đơn ⟺ có credential GDT. */
+  getFeatureInvoice: () => call<boolean>("has_credentials"),
+  /** Tắt module hoá đơn: xoá credential + hoá đơn (giữ settings), dừng sync. */
+  disableInvoices: () => call<void>("disable_invoices"),
+  /** Trạng thái đồng bộ (khoảng đã tải, backfill, lần đồng bộ gần nhất). */
+  getSyncStatus: () => call<SyncState>("get_sync_status"),
+  /** Luồng nền có đang chạy 1 lượt đồng bộ không. */
+  isSyncing: () => call<boolean>("is_syncing"),
+  /** MST đã lưu ở keychain; null nếu chưa đăng nhập. */
+  getUsername: () => call<string | null>("get_username"),
+  /** Mốc dừng backfill hiện tại (yyyy-MM-dd). */
+  getFloor: () => call<string>("get_floor"),
 };
+
+/** QueryKey chung cho cờ tính năng nguyên liệu & COA (dùng ở sidebar + settings). */
+export const FEATURE_RAW_MATERIALS_KEY = ["feature", "raw_materials"] as const;
+/** QueryKey chung cho cờ module hoá đơn (dùng ở sidebar + settings + guard). */
+export const FEATURE_INVOICE_KEY = ["feature", "invoice"] as const;
+/** QueryKey trạng thái đồng bộ (trang Cài đặt tính năng). */
+export const SYNC_STATUS_KEY = ["sync_status"] as const;
+/** QueryKey MST + mốc floor đã lưu. */
+export const CREDENTIAL_USERNAME_KEY = ["credential", "username"] as const;
+export const FLOOR_KEY = ["floor"] as const;

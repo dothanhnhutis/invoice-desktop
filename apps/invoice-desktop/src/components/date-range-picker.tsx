@@ -3,6 +3,7 @@ import {
   differenceInCalendarDays,
   format,
   getDaysInMonth,
+  isSameDay,
 } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import type { DateRange } from "react-day-picker";
@@ -17,12 +18,13 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-// Số ngày tối đa cho khoảng có mốc neo (ngày muộn hơn) = `to`.
+// Số ngày tối đa cho khoảng neo tại `anchor`; `dir` = hướng khoảng trải ra
+// (-1: anchor là `to`, khoảng lùi về trước; 1: anchor là `from`, khoảng tiến tới sau).
 // = số ngày của tháng chứa NGÀY Ở GIỮA khoảng; tìm điểm bất động (hội tụ sau vài vòng).
-function maxRangeDays(to: Date): number {
-  let l = getDaysInMonth(to);
+function maxRangeDays(anchor: Date, dir: 1 | -1): number {
+  let l = getDaysInMonth(anchor);
   for (let i = 0; i < 4; i++) {
-    const mid = addDays(to, -Math.floor((l - 1) / 2)); // điểm giữa của [to-(l-1), to]
+    const mid = addDays(anchor, dir * Math.floor((l - 1) / 2)); // điểm giữa khoảng
     const d = getDaysInMonth(mid);
     if (d === l) break;
     l = d;
@@ -32,7 +34,7 @@ function maxRangeDays(to: Date): number {
 
 // Khoảng mặc định: kết thúc ở `to` (mặc định hôm nay), lùi về trước đúng maxRangeDays (~1 tháng).
 export function defaultOneMonthRange(to: Date = new Date()): DateRange {
-  return { from: addDays(to, -(maxRangeDays(to) - 1)), to };
+  return { from: addDays(to, -(maxRangeDays(to, -1) - 1)), to };
 }
 
 export function DateRangePicker({
@@ -73,22 +75,32 @@ export function DateRangePicker({
           mode="range"
           numberOfMonths={2}
           selected={value}
-          onSelect={(range) => {
+          onSelect={(range, triggerDate) => {
             if (!range?.from || !range?.to) {
               onChange(range);
               return;
             }
-            // Kẹp độ dài khoảng theo tháng của điểm giữa; chỉ rút `from` (neo ở `to`).
-            const maxL = maxRangeDays(range.to);
-            const len = differenceInCalendarDays(range.to, range.from) + 1;
+            // Kẹp độ dài khoảng theo tháng của điểm giữa: neo ở đầu người dùng
+            // đã chọn TRƯỚC, chỉ rút đầu vừa bấm (`triggerDate`) lại.
+            const { from, to } = range;
+            const clampTo = !isSameDay(from, triggerDate); // vừa bấm là `to` -> neo `from`
+            const maxL = clampTo ? maxRangeDays(from, 1) : maxRangeDays(to, -1);
+            const len = differenceInCalendarDays(to, from) + 1;
+            if (len <= maxL) {
+              onChange(range);
+              return;
+            }
             onChange(
-              len > maxL
-                ? { from: addDays(range.to, -(maxL - 1)), to: range.to }
-                : range,
+              clampTo
+                ? { from, to: addDays(from, maxL - 1) }
+                : { from: addDays(to, -(maxL - 1)), to },
             );
           }}
           showOutsideDays={false}
           fixedWeeks
+          // Đã đủ khoảng -> bấm tiếp mở khoảng MỚI (mặc định của thư viện là nới
+          // khoảng cũ, khiến khoảng mới luôn bị luật kẹp ~1 tháng kéo về chỗ cũ).
+          resetOnSelect
           disabled={{ after: new Date() }}
           autoFocus
         />

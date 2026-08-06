@@ -20,7 +20,7 @@ import {
 import { api, type RawMaterial } from "@/lib/api";
 import { useDebounce } from "@/hooks/use-debounce";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { ColumnDef, OnChangeFn, PaginationState } from "@tanstack/react-table";
 import { EllipsisIcon, Search } from "lucide-react";
 import React from "react";
@@ -30,6 +30,16 @@ const PAGE_SIZES = [10, 20, 30, 40, 50];
 type CoasSearch = { q?: string; page: number; size: number };
 
 export const Route = createFileRoute("/_protected/coas")({
+  // Module tắt → chặn truy cập trực tiếp, đẩy sang trang Cài đặt tính năng.
+  beforeLoad: async () => {
+    let enabled = true;
+    try {
+      enabled = await api.getFeatureRawMaterials();
+    } catch {
+      /* lỗi lệnh -> cho vào */
+    }
+    if (!enabled) throw redirect({ to: "/settings/features" });
+  },
   // Điều kiện tìm/phân trang nằm trên URL → giữ nguyên khi xem chi tiết rồi Back.
   validateSearch: (s: Record<string, unknown>): CoasSearch => {
     const size = PAGE_SIZES.includes(Number(s.size)) ? Number(s.size) : 10;

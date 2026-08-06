@@ -33,6 +33,14 @@ import { formatVnDate } from "@/lib/date";
 
 export const Route = createFileRoute("/_protected/coas_/$id")({
   beforeLoad: async ({ params }) => {
+    // Module tắt → chặn truy cập trực tiếp, đẩy sang trang Cài đặt tính năng.
+    let enabled = true;
+    try {
+      enabled = await api.getFeatureRawMaterials();
+    } catch {
+      /* lỗi lệnh -> cho vào */
+    }
+    if (!enabled) throw redirect({ to: "/settings/features" });
     const id = Number(params.id);
     if (!Number.isInteger(id))
       throw redirect({ to: "/coas", search: { page: 1, size: 10 } });

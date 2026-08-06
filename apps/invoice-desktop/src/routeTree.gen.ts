@@ -12,8 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProtectedRouteRouteImport } from './routes/_protected/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ProtectedCoasRouteImport } from './routes/_protected/coas'
+import { Route as ProtectedSettingsRouteRouteImport } from './routes/_protected/settings/route'
 import { Route as ProtectedSettingsNotificationsRouteImport } from './routes/_protected/settings/notifications'
-import { Route as ProtectedSettingsFeatureRouteImport } from './routes/_protected/settings/feature'
+import { Route as ProtectedSettingsFeaturesRouteImport } from './routes/_protected/settings/features'
+import { Route as ProtectedSettingsAccessibilitysRouteImport } from './routes/_protected/settings/accessibilitys'
 import { Route as ProtectedCoasIdRouteImport } from './routes/_protected/coas_.$id'
 import { Route as ProtectedLookupsInvoiceSoldRouteImport } from './routes/_protected/lookups/invoice/sold'
 import { Route as ProtectedLookupsInvoicePurchaseRouteImport } from './routes/_protected/lookups/invoice/purchase'
@@ -33,17 +35,28 @@ const ProtectedCoasRoute = ProtectedCoasRouteImport.update({
   path: '/coas',
   getParentRoute: () => ProtectedRouteRoute,
 } as any)
+const ProtectedSettingsRouteRoute = ProtectedSettingsRouteRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => ProtectedRouteRoute,
+} as any)
 const ProtectedSettingsNotificationsRoute =
   ProtectedSettingsNotificationsRouteImport.update({
-    id: '/settings/notifications',
-    path: '/settings/notifications',
-    getParentRoute: () => ProtectedRouteRoute,
+    id: '/notifications',
+    path: '/notifications',
+    getParentRoute: () => ProtectedSettingsRouteRoute,
   } as any)
-const ProtectedSettingsFeatureRoute =
-  ProtectedSettingsFeatureRouteImport.update({
-    id: '/settings/feature',
-    path: '/settings/feature',
-    getParentRoute: () => ProtectedRouteRoute,
+const ProtectedSettingsFeaturesRoute =
+  ProtectedSettingsFeaturesRouteImport.update({
+    id: '/features',
+    path: '/features',
+    getParentRoute: () => ProtectedSettingsRouteRoute,
+  } as any)
+const ProtectedSettingsAccessibilitysRoute =
+  ProtectedSettingsAccessibilitysRouteImport.update({
+    id: '/accessibilitys',
+    path: '/accessibilitys',
+    getParentRoute: () => ProtectedSettingsRouteRoute,
   } as any)
 const ProtectedCoasIdRoute = ProtectedCoasIdRouteImport.update({
   id: '/coas_/$id',
@@ -71,9 +84,11 @@ const ProtectedLookupsInvoicePurchaseIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/settings': typeof ProtectedSettingsRouteRouteWithChildren
   '/coas': typeof ProtectedCoasRoute
   '/coas/$id': typeof ProtectedCoasIdRoute
-  '/settings/feature': typeof ProtectedSettingsFeatureRoute
+  '/settings/accessibilitys': typeof ProtectedSettingsAccessibilitysRoute
+  '/settings/features': typeof ProtectedSettingsFeaturesRoute
   '/settings/notifications': typeof ProtectedSettingsNotificationsRoute
   '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
@@ -81,9 +96,11 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/settings': typeof ProtectedSettingsRouteRouteWithChildren
   '/coas': typeof ProtectedCoasRoute
   '/coas/$id': typeof ProtectedCoasIdRoute
-  '/settings/feature': typeof ProtectedSettingsFeatureRoute
+  '/settings/accessibilitys': typeof ProtectedSettingsAccessibilitysRoute
+  '/settings/features': typeof ProtectedSettingsFeaturesRoute
   '/settings/notifications': typeof ProtectedSettingsNotificationsRoute
   '/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
@@ -93,9 +110,11 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_protected': typeof ProtectedRouteRouteWithChildren
+  '/_protected/settings': typeof ProtectedSettingsRouteRouteWithChildren
   '/_protected/coas': typeof ProtectedCoasRoute
   '/_protected/coas_/$id': typeof ProtectedCoasIdRoute
-  '/_protected/settings/feature': typeof ProtectedSettingsFeatureRoute
+  '/_protected/settings/accessibilitys': typeof ProtectedSettingsAccessibilitysRoute
+  '/_protected/settings/features': typeof ProtectedSettingsFeaturesRoute
   '/_protected/settings/notifications': typeof ProtectedSettingsNotificationsRoute
   '/_protected/lookups/invoice/purchase': typeof ProtectedLookupsInvoicePurchaseRoute
   '/_protected/lookups/invoice/sold': typeof ProtectedLookupsInvoiceSoldRoute
@@ -105,9 +124,11 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/settings'
     | '/coas'
     | '/coas/$id'
-    | '/settings/feature'
+    | '/settings/accessibilitys'
+    | '/settings/features'
     | '/settings/notifications'
     | '/lookups/invoice/purchase'
     | '/lookups/invoice/sold'
@@ -115,9 +136,11 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/settings'
     | '/coas'
     | '/coas/$id'
-    | '/settings/feature'
+    | '/settings/accessibilitys'
+    | '/settings/features'
     | '/settings/notifications'
     | '/lookups/invoice/purchase'
     | '/lookups/invoice/sold'
@@ -126,9 +149,11 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_protected'
+    | '/_protected/settings'
     | '/_protected/coas'
     | '/_protected/coas_/$id'
-    | '/_protected/settings/feature'
+    | '/_protected/settings/accessibilitys'
+    | '/_protected/settings/features'
     | '/_protected/settings/notifications'
     | '/_protected/lookups/invoice/purchase'
     | '/_protected/lookups/invoice/sold'
@@ -163,19 +188,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedCoasRouteImport
       parentRoute: typeof ProtectedRouteRoute
     }
-    '/_protected/settings/notifications': {
-      id: '/_protected/settings/notifications'
-      path: '/settings/notifications'
-      fullPath: '/settings/notifications'
-      preLoaderRoute: typeof ProtectedSettingsNotificationsRouteImport
+    '/_protected/settings': {
+      id: '/_protected/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof ProtectedSettingsRouteRouteImport
       parentRoute: typeof ProtectedRouteRoute
     }
-    '/_protected/settings/feature': {
-      id: '/_protected/settings/feature'
-      path: '/settings/feature'
-      fullPath: '/settings/feature'
-      preLoaderRoute: typeof ProtectedSettingsFeatureRouteImport
-      parentRoute: typeof ProtectedRouteRoute
+    '/_protected/settings/notifications': {
+      id: '/_protected/settings/notifications'
+      path: '/notifications'
+      fullPath: '/settings/notifications'
+      preLoaderRoute: typeof ProtectedSettingsNotificationsRouteImport
+      parentRoute: typeof ProtectedSettingsRouteRoute
+    }
+    '/_protected/settings/features': {
+      id: '/_protected/settings/features'
+      path: '/features'
+      fullPath: '/settings/features'
+      preLoaderRoute: typeof ProtectedSettingsFeaturesRouteImport
+      parentRoute: typeof ProtectedSettingsRouteRoute
+    }
+    '/_protected/settings/accessibilitys': {
+      id: '/_protected/settings/accessibilitys'
+      path: '/accessibilitys'
+      fullPath: '/settings/accessibilitys'
+      preLoaderRoute: typeof ProtectedSettingsAccessibilitysRouteImport
+      parentRoute: typeof ProtectedSettingsRouteRoute
     }
     '/_protected/coas_/$id': {
       id: '/_protected/coas_/$id'
@@ -208,21 +247,37 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface ProtectedSettingsRouteRouteChildren {
+  ProtectedSettingsAccessibilitysRoute: typeof ProtectedSettingsAccessibilitysRoute
+  ProtectedSettingsFeaturesRoute: typeof ProtectedSettingsFeaturesRoute
+  ProtectedSettingsNotificationsRoute: typeof ProtectedSettingsNotificationsRoute
+}
+
+const ProtectedSettingsRouteRouteChildren: ProtectedSettingsRouteRouteChildren =
+  {
+    ProtectedSettingsAccessibilitysRoute: ProtectedSettingsAccessibilitysRoute,
+    ProtectedSettingsFeaturesRoute: ProtectedSettingsFeaturesRoute,
+    ProtectedSettingsNotificationsRoute: ProtectedSettingsNotificationsRoute,
+  }
+
+const ProtectedSettingsRouteRouteWithChildren =
+  ProtectedSettingsRouteRoute._addFileChildren(
+    ProtectedSettingsRouteRouteChildren,
+  )
+
 interface ProtectedRouteRouteChildren {
+  ProtectedSettingsRouteRoute: typeof ProtectedSettingsRouteRouteWithChildren
   ProtectedCoasRoute: typeof ProtectedCoasRoute
   ProtectedCoasIdRoute: typeof ProtectedCoasIdRoute
-  ProtectedSettingsFeatureRoute: typeof ProtectedSettingsFeatureRoute
-  ProtectedSettingsNotificationsRoute: typeof ProtectedSettingsNotificationsRoute
   ProtectedLookupsInvoicePurchaseRoute: typeof ProtectedLookupsInvoicePurchaseRoute
   ProtectedLookupsInvoiceSoldRoute: typeof ProtectedLookupsInvoiceSoldRoute
   ProtectedLookupsInvoicePurchaseIdRoute: typeof ProtectedLookupsInvoicePurchaseIdRoute
 }
 
 const ProtectedRouteRouteChildren: ProtectedRouteRouteChildren = {
+  ProtectedSettingsRouteRoute: ProtectedSettingsRouteRouteWithChildren,
   ProtectedCoasRoute: ProtectedCoasRoute,
   ProtectedCoasIdRoute: ProtectedCoasIdRoute,
-  ProtectedSettingsFeatureRoute: ProtectedSettingsFeatureRoute,
-  ProtectedSettingsNotificationsRoute: ProtectedSettingsNotificationsRoute,
   ProtectedLookupsInvoicePurchaseRoute: ProtectedLookupsInvoicePurchaseRoute,
   ProtectedLookupsInvoiceSoldRoute: ProtectedLookupsInvoiceSoldRoute,
   ProtectedLookupsInvoicePurchaseIdRoute:
