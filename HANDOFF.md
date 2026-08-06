@@ -3,12 +3,14 @@
 Tài liệu bàn giao để **tiếp tục công việc ở máy khác**. Đây là nguồn ngữ cảnh chính (memory
 của Claude nằm ở `~/.claude/...` **cục bộ theo máy**, không theo repo).
 
-> Cập nhật lần cuối: phiên **nâng cấp bộ lọc hoá đơn** — thêm 2 **Select trạng thái** (`tthai` Trạng
-> thái HĐ, `ttxly` Trạng thái xử lý; backend `InvoiceFilter` += tthai/ttxly), đổi **khmshdon** từ Input
-> → Select (Tất cả + 1..6), **Range Picker** nâng cấp (chặn ngày tương lai, cố định 6 tuần, giới hạn độ
-> dài khoảng = số ngày tháng của điểm giữa), và **đưa filter + phân trang lên URL** (validateSearch) để
-> **giữ trạng thái khi Back/refresh**. (Trước đó: chi tiết hoá đơn & tải XML+PDF, ghim cột, filter cơ
-> bản; phân trang server; hệ Nguyên liệu + COA.)
+> Cập nhật lần cuối: phiên **bật/tắt module + trang Cài đặt**. Thay đổi lớn nhất: **app KHÔNG còn bắt
+> buộc đăng nhập GDT** — vào thẳng `/settings/features`; "Hoá đơn" và "Nguyên liệu & COA" trở thành 2
+> **module bật/tắt** ở trang Cài đặt (tắt = xoá dữ liệu module đó, route bị chặn, mục sidebar ẩn).
+> Kèm theo: cờ **đang đồng bộ** (`sync://busy` + `is_syncing`) khoá form đổi mật khẩu/mốc thời gian,
+> panel trạng thái đồng bộ dời từ trang hoá đơn sang Cài đặt, sửa lỗi **không chọn được khoảng ngày
+> xa hơn** ở Range Picker, và đổi tên app thành **ICH Toolkit** (⚠️ đổi luôn `identifier` → thư mục dữ
+> liệu mới, xem §7 + §9). (Trước đó: bộ lọc hoá đơn + filter/phân trang trên URL; chi tiết hoá đơn &
+> tải XML+PDF; hệ Nguyên liệu + COA.)
 > Nếu bạn sửa tiếp, cập nhật lại phần **Trạng thái** và **Việc còn dang dở** bên dưới.
 
 ---
@@ -61,41 +63,54 @@ Workspace members (`Cargo.toml`, resolver 3):
 - **`libs/store`** — SQLite (rusqlite bundled): `Db` open/upsert/query/sync_state/settings/count/
   delete_invoices_before/clear_all; **+ raw_materials/coas**: insert/update/soft_delete/get/list/count,
   `get_raw_material_by_code`, `insert_raw_materials_bulk`, `insert_coa`/`get_coa`/`list_coas`/
-  `soft_delete_coa`/`set_coa_path`. (13 unit test.)
+  `soft_delete_coa`/`set_coa_path`; **+ xoá theo module** (xem §6.7): `clear_invoices` (xoá hoá đơn +
+  reset sync_state nhưng **GIỮ settings**) và `delete_all_raw_materials_and_coas` (xoá **cứng**
+  raw_materials+coas, reset `sqlite_sequence`). (20 unit test.)
 - **`apps/captcha`** — bin công cụ dev: `label_tool`, `solver`, `login` (mỏng, gọi vào lib).
 - **`apps/invoice-desktop/src-tauri`** — app Tauri (edition 2021). `AppState{client, solver,
-  token: Mutex<Option<String>>, db, wake: Notify, auth_blocked: AtomicBool}`.
+  token: Mutex<Option<String>>, db, wake: Notify, auth_blocked: AtomicBool, syncing: AtomicBool}`
+  (`syncing` = luồng nền đang chạy 1 lượt đồng bộ, xem §4).
   Dep thêm: `uuid`(v7 — đặt tên file COA), `zip`(nén COA khi tải), `csv`(import/export CSV).
 
 Frontend (`apps/invoice-desktop`): React 19, Vite, **TanStack Router** (file-based; `routeTree.gen.ts`
 **tự sinh** khi dev server chạy hoặc `pnpm dlx @tanstack/router-cli generate`), TanStack Query/Form,
 Zod, **Base UI + shadcn**, Tailwind v4, `@tauri-apps/api` v2.
 
-Cây route:
-- `/` → [routes/index.tsx](apps/invoice-desktop/src/routes/index.tsx): nếu đã có credential →
-  redirect `/lookups/invoice/purchase`; chưa → render `<LoginDialog/>`.
+Cây route (⚠️ **đã bỏ guard đăng nhập toàn app**):
+- `/` → [routes/index.tsx](apps/invoice-desktop/src/routes/index.tsx): **redirect thẳng**
+  `/settings/features`. Không còn màn đăng nhập ở đây.
 - `/_protected` → [routes/_protected/route.tsx](apps/invoice-desktop/src/routes/_protected/route.tsx):
-  **layout guard** — `beforeLoad` kiểm `has_credentials` (chưa có → redirect `/`), `loader` gọi
-  `profile`; bọc `SyncProvider` + `AuthProvider` + sidebar.
-- `/_protected/lookups/invoice/purchase` và `.../sold`.
+  **chỉ còn layout** (`SyncProvider` + sidebar + `NavHeader`). Đã **xoá** `beforeLoad`
+  (`has_credentials`), `loader` (`profile`) và `AuthProvider` — vào app không cần credential GDT.
+- `/_protected/settings` → [settings/route.tsx](apps/invoice-desktop/src/routes/_protected/settings/route.tsx):
+  layout **sidebar con** cho 3 trang: `features` (Tính năng — xem §6.7), `notifications` (Thông báo —
+  placeholder), `accessibilitys` (Giao diện — chọn sáng/tối/hệ thống qua `theme-context`).
+- `/_protected/lookups/invoice/purchase` (+ `purchase_/$id`) và `.../sold`.
 - `/_protected/coas` (danh sách nguyên liệu) và `/_protected/coas_/$id` (chi tiết — dấu `_` để
   **un-nest** khỏi layout danh sách; xem mục 6.5).
+- **Guard theo module**: các route hoá đơn & nguyên liệu tự kiểm cờ tính năng trong `beforeLoad`, tắt
+  thì `redirect({ to: "/settings/features" })` (xem §6.7).
 
 Điều hướng: [nav-header.tsx](apps/invoice-desktop/src/components/nav-header.tsx) breadcrumb **động** theo
 `useMatches()` (map `routeId`→nhãn); [nav-main.tsx](apps/invoice-desktop/src/components/nav-main.tsx)
 sidebar **active theo route** (`useRouterState` pathname, `/coas` active cả ở `/coas/$id`) — không còn
-hardcode `isActive`.
+hardcode `isActive`. [app-sidebar.tsx](apps/invoice-desktop/src/components/app-sidebar.tsx) **lọc mục
+theo cờ tính năng** (module tắt → ẩn mục) và **đã bỏ `NavUser`** (file `nav-user.tsx` bị xoá).
 
 ---
 
 ## 3. Luồng auth + token
 
-- **Đăng nhập** ([login-dialog.tsx](apps/invoice-desktop/src/components/login-dialog.tsx)):
-  `login` (giải captcha) → nếu OK → `set_floor` → `set_credentials` → `navigate` sang purchase.
-  Lỗi hiện đỏ dưới form, dialog ở nguyên (Base UI `AlertDialogAction` không tự đóng).
+- **Đăng nhập** giờ nằm ở **trang Cài đặt tính năng** (`InvoiceEnableForm` trong
+  [settings/features.tsx](apps/invoice-desktop/src/routes/_protected/settings/features.tsx)), gạt
+  công tắc "Quản lý hoá đơn" để hiện form. Thứ tự **an toàn giữ nguyên**: `login` (xác minh, gửi
+  **1 lần**) → `set_floor` → `set_credentials`. Lỗi hiện đỏ dưới form.
+  ⚠️ [login-dialog.tsx](apps/invoice-desktop/src/components/login-dialog.tsx) **không còn được dùng**
+  (code chết, xem §7).
 - **Credential + token ở OS keychain** ([secrets.rs](apps/invoice-desktop/src-tauri/src/secrets.rs)),
   service `com.thanhnhut.invoice-desktop`, entry `username` / `password` / `token`. KHÔNG lưu
-  plaintext/SQLite.
+  plaintext/SQLite. ⚠️ Tên service này **cố định trong secrets.rs**, KHÔNG đổi theo `identifier` của
+  Tauri (đã đổi thành `ich-toolkit`) → credential cũ vẫn dùng được sau khi đổi tên app.
 - **Token bền vững**: token là JWT (~1 ngày). `hddt::is_expired(token, skew)` đọc claim `exp`.
   [helper.rs](apps/invoice-desktop/src-tauri/src/helper.rs) `valid_cached_token` lấy token CÒN HẠN
   từ RAM → keychain; chỉ `login` khi hết hạn/không có, và lưu lại. → **mở lại app không phải giải
@@ -103,6 +118,8 @@ hardcode `isActive`.
 - **`logout`** ([lib.rs](apps/invoice-desktop/src-tauri/src/lib.rs)): `auth_blocked=true`, xóa token,
   `secrets::clear()` (xóa cả token), `db.clear_all()` (xóa hóa đơn + settings + reset sync_state),
   `wake`.
+- **`disable_invoices`** (dùng khi TẮT module hoá đơn): giống `logout` nhưng gọi `db.clear_invoices()`
+  → **giữ nguyên settings** (floor + cờ tính năng khác). Đừng dùng `clear_all` ở đây.
 
 ---
 
@@ -110,11 +127,21 @@ hardcode `isActive`.
 
 [sync.rs](apps/invoice-desktop/src-tauri/src/sync.rs): vòng lặp nền `run(app)`.
 - Chờ tới khi có credential và không `auth_blocked`.
-- **Backfill** theo **cửa sổ tháng lịch** lùi dần tới FLOOR (setting `floor`, mặc định `2022-01-01`);
-  `next_window` là hàm thuần có unit test.
+- **Backfill** theo **cửa sổ tháng lịch** lùi dần tới FLOOR (setting `floor`, mặc định
+  **`2026-01-01`** — hằng `DEFAULT_FLOOR`); `next_window` là hàm thuần có unit test.
 - **Incremental** mỗi ~1h từ mốc mới nhất tới hôm nay.
 - `ensure_token` dùng `valid_cached_token`; upsert idempotent theo `id`.
 - Emit `sync://progress` / `sync://error` (Tauri event).
+- **Cờ "đang đồng bộ"**: `run()` bọc `set_busy(&app, true)` … `sync_once` … `set_busy(&app, false)`
+  (luôn hạ cờ ở mọi nhánh Ok/Err) → ghi `AppState.syncing` + phát event `sync://busy` (bool).
+  UI đọc trạng thái **ban đầu** bằng command `is_syncing` vì event chỉ phát lúc **chuyển** trạng thái.
+  ⚠️ Không dùng `sync://progress` làm cờ "đang chạy": nó chỉ phát khi xong 1 cửa sổ và giá trị cũ nằm
+  lại trong `useSync()` suốt 1 giờ luồng ngủ.
+- **`set_floor` trả `Err` khi đang đồng bộ** ("Đang đồng bộ, vui lòng thử lại sau…"). Đây là race
+  thật: `set_floor` ghi `sync_state` + `delete_invoices_before`, trong khi `sync_once` đang giữ bản
+  `ss` cũ trong RAM và ghi đè lại sau mỗi cửa sổ.
+- Listener phía UI ([sync-context.tsx](apps/invoice-desktop/src/contexts/sync-context.tsx)) **đã bật**
+  cho cả 3 event; `useSync()` trả `{ progress, error, busy }`.
 - API: `GET /api/query/invoices/purchase`, params `sort=tdlap:desc`, `size=50`,
   `search=tdlap=ge=<dd/MM/yyyyTHH:mm:ss>;tdlap=le=<...>`, phân trang bằng cursor `state`.
   Response `{datas, total, state, time}`; hết khi `datas` rỗng hoặc `state` rỗng.
@@ -125,7 +152,8 @@ hardcode `isActive`.
 ## 5. Tauri commands (đã đăng ký ở `invoke_handler`)
 
 Auth/sync/hóa đơn: `login`, `logout`, `profile`, `set_credentials`, `clear_credentials`,
-`has_credentials`, `get_sync_status`, `list_invoices(filter)` **→ `Paged<Invoice>`** (phân trang server:
+`has_credentials`, **`get_username`** (MST đã lưu, `Option<String>`), **`is_syncing`** (bool),
+**`disable_invoices`** (tắt module hoá đơn), `get_sync_status`, `list_invoices(filter)` **→ `Paged<Invoice>`** (phân trang server:
 `filter.limit`/`filter.offset` + `count_invoices`; filter có `nbmst/khhdon/shdon/khmshdon` **+ `tthai`/`ttxly`**),
 `get_invoice_detail(id)` **→ `Invoice`** (lazy-load `qrcode`+`hdhhdvu`: gọi API detail rồi cache DB —
 xem 6.6), `download_invoices(ids, dir)` **→ `ExportInvoiceResult {downloaded, dir, errors}`** (tải
@@ -140,6 +168,12 @@ Nguyên liệu: `get_raw_material_by_id`, `list_raw_materials(filter)`, `create_
 COA: `list_coas`, `create_coa`, `create_coas_bulk`, `read_coa_file`, `open_coa_file`,
 `open_bytes_external(file_name, file_bytes)` (ghi file tạm + mở app ngoài — xem COA CHƯA lưu),
 `delete_coa`, `download_coas(ids, base_name)`, `download_coas_from_csv(csv_bytes, base_name)`.
+
+Cờ tính năng: `get_feature_raw_materials`, `set_feature_raw_materials(enabled)` (tắt ⇒ **xoá dữ liệu**
+— xem §6.7).
+
+Frontend gọi qua wrapper [lib/api.ts](apps/invoice-desktop/src/lib/api.ts) (`api.*` + `ApiError`);
+tránh gọi `invoke("...")` trực tiếp ở component mới.
 
 ---
 
@@ -161,7 +195,7 @@ tgtttbso(f64), tlhdon, ttcktmai(f64), tthai(u8), ttxly(u8), ntao(String ISO), nm
   `count_invoices` dùng chung helper `push_invoice_conditions` (tránh lệch WHERE). `list_invoices`
   phân trang phía server: trả `Paged<Invoice> {data, total}`
   (`query` limit/offset + `count_invoices`). Trang purchase dùng `DataTable` manualPagination
-  (mặc định 50 dòng, đổi số dòng → về trang 1).
+  (**mặc định 10 dòng**, `PAGE_SIZES = [10,20,30,40,50]`, đổi số dòng → về trang 1).
 
 ---
 
@@ -180,9 +214,9 @@ Quản lý nguyên liệu thô + phiếu kiểm nghiệm (COA — Certificate of
   FORM nhập FLOOR**. Helper [lib/date.ts](apps/invoice-desktop/src/lib/date.ts): `isVnDate`,
   `formatVnDate` (ISO→dd/mm/yyyy để hiển thị), `vnDateToIso` (dd/mm/yyyy→ISO khi submit). Nhập bằng
   text (không `type=date`). ⚠️ **Lưu trữ `ntao` và `floor` VẪN ISO `yyyy-MM-dd`** (dính sync/prune +
-  `set_floor` parse `%Y-%m-%d`); chỉ **biên form** đổi qua lại dd/mm/yyyy↔ISO. Form FLOOR ở
-  [login-dialog.tsx](apps/invoice-desktop/src/components/login-dialog.tsx) (prefill `get_floor` →
-  `formatVnDate`) và trang purchase.
+  `set_floor` parse `%Y-%m-%d`); chỉ **biên form** đổi qua lại dd/mm/yyyy↔ISO.
+  ⚠️ **FLOOR giờ chọn bằng Calendar** ở trang Cài đặt tính năng (`FloorDatePicker`, hiển thị
+  `dd/MM/yyyy`, submit `format(date,"yyyy-MM-dd")`) — không còn ô text ở login-dialog/purchase.
 - **Thêm COA**: từng file ([coa_dialog.tsx](apps/invoice-desktop/src/components/coa_dialog.tsx)) hoặc
   **cả thư mục** ([coa_bulk_dialog.tsx](apps/invoice-desktop/src/components/coa_bulk_dialog.tsx) dùng
   `<input webkitdirectory>` → nhập số lô/ngày từng file → `create_coas_bulk`).
@@ -248,9 +282,10 @@ lập, nút Lọc/Xoá lọc.
   `useNavigate()`, `page` 1-based) — **giữ nguyên khi xem chi tiết rồi Back / F5**; theo đúng pattern
   [coas.tsx](apps/invoice-desktop/src/routes/_protected/coas.tsx). `searchToApplied(search)` dựng
   `AppliedFilter` cho query; ngày → ISO **biên ngày giờ VN** (`dayBoundIso` `+07:00`) để so `ntao` (UTC).
-  ⚠️ Vì `page`/`size` bắt buộc trên URL, **caller điều hướng tới purchase phải truyền
-  `search: { page: 1, size: 10 }`** ([login-dialog.tsx](apps/invoice-desktop/src/components/login-dialog.tsx),
-  [index.tsx](apps/invoice-desktop/src/routes/index.tsx)).
+  ⚠️ `page`/`size` là **bắt buộc** trong `PurchaseSearch` (và `CoasSearch`) → `Link`/`navigate` viết
+  **đường dẫn literal** tới 2 trang này phải kèm `search: { page: 1, size: 10 }`, nếu không lỗi type.
+  (Sidebar thoát được vì `item.url` có kiểu `string` đã bị nới; runtime vẫn chạy do `validateSearch`
+  tự áp mặc định `page=1`, `size=10`.)
 - **3 filter bắt buộc có mặc định áp ngay khi vào trang**: `tthai`=Tất cả (không lọc), `ttxly`=phần tử
   đầu (5), khoảng ngày = **today lùi ~1 tháng** (`defaultOneMonthRange`). `khmshdon` tùy chọn (mặc định
   Tất cả). Select base-ui hiển thị **label** qua `SelectValue` children-hàm (value là chuỗi key,
@@ -258,7 +293,12 @@ lập, nút Lọc/Xoá lọc.
 - **Range Picker rules** ([date-range-picker.tsx](apps/invoice-desktop/src/components/date-range-picker.tsx)):
   chặn **ngày tương lai** (`disabled={{after: today}}`), ẩn ngày tháng khác (`showOutsideDays={false}`),
   **cố định 6 tuần** (`fixedWeeks`, tránh nhảy UI), và **giới hạn độ dài khoảng = số ngày của tháng chứa
-  điểm giữa** (`maxRangeDays`, kẹp trong `onSelect` — neo `to`, rút `from`).
+  điểm giữa** (`maxRangeDays(anchor, dir)`, kẹp trong `onSelect`).
+  ⚠️ **Bẫy đã sửa** — trước đây bấm ngày khi khoảng đã đủ 2 đầu thì react-day-picker **nới** khoảng cũ
+  (`addToRange`), rồi luật kẹp (luôn neo `to`) rút về **đúng khoảng cũ** ⇒ **không chọn được khoảng ở
+  xa** (vd đang 07/07–06/08 thì không chọn nổi 01/01–31/01, bấm như không ăn). Cách sửa: bật
+  **`resetOnSelect`** (đủ 2 đầu → bấm tiếp mở khoảng MỚI) và kẹp theo **đầu vừa bấm** (`triggerDate`),
+  neo đầu người dùng đã chọn trước. Đừng quay lại kiểu neo cứng ở `to`.
 - Component (kiểu shadcn, thích ứng @base-ui + react-day-picker@10):
   [ui/popover.tsx](apps/invoice-desktop/src/components/ui/popover.tsx),
   [ui/calendar.tsx](apps/invoice-desktop/src/components/ui/calendar.tsx) (ô ngày `h-8 w-8` giữ cột khi
@@ -267,31 +307,83 @@ lập, nút Lọc/Xoá lọc.
 
 ---
 
+## 6.7. Bật/tắt module & trang Cài đặt
+
+Toàn bộ ở [settings/features.tsx](apps/invoice-desktop/src/routes/_protected/settings/features.tsx)
+(4 component: `RouteComponent`, `InvoiceEnableForm`, `InvoiceEnabledPanel`, `FloorDatePicker`).
+
+**2 module, 2 kiểu lưu cờ khác nhau:**
+- **Nguyên liệu & COA** — cờ ở setting `feature_raw_materials` (**vắng = BẬT**; `"0"` = tắt).
+  Tắt ⇒ `set_feature_raw_materials(false)` xoá thư mục `app_data_dir/coa` (best-effort) +
+  `delete_all_raw_materials_and_coas()`. **Không khôi phục được** → có `AlertDialog` xác nhận.
+- **Hoá đơn** — **không có setting riêng**: bật ⟺ `has_credentials()` (có credential GDT trong
+  keychain). Bật = hiện `InvoiceEnableForm` (MST + mật khẩu + ngày thành lập → `login` → `set_floor` →
+  `set_credentials`). Tắt = `disable_invoices()` (xoá credential/token + hoá đơn, **giữ** floor/cờ
+  khác) + `AlertDialog` xác nhận.
+
+**Khi module hoá đơn ĐANG BẬT** — `InvoiceEnabledPanel` hiển thị:
+- Banner lỗi/tiến độ realtime từ `useSync()` + thẻ trạng thái ("Tải lịch sử: đã xong/đang chạy",
+  "Khoảng đã tải", "Đồng bộ gần nhất" — `get_sync_status`, `refetchInterval: 3000`).
+- Form cập nhật: **MST read-only** (đổi tài khoản ⇒ tắt rồi bật lại), **Mật khẩu mới** (để trống =
+  không đổi) và **Mốc thời gian** (floor). Bấm Lưu: nếu có mật khẩu → `login` **1 lần duy nhất** rồi
+  `set_credentials`; nếu floor đổi → `set_floor` (có thể **prune** hoá đơn cũ hơn mốc mới).
+- ⚠️ **Khoá khi đang đồng bộ**: `busy` (từ `sync://busy`) ⇒ ô mật khẩu + nút chọn ngày + nút Lưu bị
+  `disabled`, kèm dòng "Đang đồng bộ — không thể đổi mật khẩu hoặc mốc thời gian…". Backend cũng chặn
+  `set_floor` (§4) nên UI chỉ là lớp chặn sớm. Tự mở lại khi luồng nền xong (không cần F5).
+
+**Guard route theo cờ** — `beforeLoad` gọi cờ, lỗi lệnh thì fallback an toàn (nguyên liệu → cho vào,
+hoá đơn → coi như chưa bật), tắt ⇒ `throw redirect({ to: "/settings/features" })`. Áp cho: `/coas`,
+`/coas_/$id`, `/lookups/invoice/purchase`, `purchase_/$id`, `/lookups/invoice/sold`.
+
+**QueryKey dùng chung** (khai báo ở [lib/api.ts](apps/invoice-desktop/src/lib/api.ts)) —
+`FEATURE_RAW_MATERIALS_KEY`, `FEATURE_INVOICE_KEY`, `SYNC_STATUS_KEY`, `CREDENTIAL_USERNAME_KEY`,
+`FLOOR_KEY`. Sidebar + trang Cài đặt + guard dùng **chung key**, nên sau khi bật/tắt chỉ cần
+`invalidateQueries` là mọi nơi tự cập nhật. Thêm cờ mới thì khai báo key ở đây, đừng viết mảng rời.
+
+**Component mới**: `ui/switch.tsx`, `ui/radio-group.tsx` (base-ui — `Switch` dùng
+`checked`/`onCheckedChange`).
+
+---
+
 ## 7. ⚠️ VIỆC CÒN DANG DỞ / BẪY (đọc kỹ khi tiếp tục)
 
+- **⚠️ ĐỔI `identifier` APP** — [tauri.conf.json](apps/invoice-desktop/src-tauri/tauri.conf.json):
+  `productName`/title → **"ICH Toolkit"**, `identifier` `com.thanhnhut.invoice-desktop` →
+  **`ich-toolkit`**. Vì `app_data_dir` suy từ `identifier`, **DB + file COA giờ nằm ở
+  `%APPDATA%/ich-toolkit/`**; dữ liệu cũ ở `%APPDATA%/com.thanhnhut.invoice-desktop/` **bị bỏ lại**
+  (app tự tạo DB rỗng mới, sync backfill lại). Muốn giữ thì copy tay `invoices.db` + thư mục `coa`.
+  **Keychain KHÔNG đổi** (service vẫn là chuỗi cũ, hardcode trong `secrets.rs`) → không phải đăng nhập lại.
 - **Spawn sync ĐÃ BẬT** — [lib.rs](apps/invoice-desktop/src-tauri/src/lib.rs) trong `setup` gọi
   `tauri::async_runtime::spawn(sync::run(app.handle().clone()));` (đồng bộ nền chạy khi có credential).
-- **Listener `sync://*` VẪN COMMENT** — [contexts/sync-context.tsx](apps/invoice-desktop/src/contexts/sync-context.tsx):
-  `useEffect` đăng ký `listen("sync://progress"/"error")` còn bị comment → `useSync().progress/error`
-  luôn null (banner tiến độ/lỗi ở purchase không hoạt động). Bỏ comment để bật lại.
+- **Code chết chưa dọn**: [login-dialog.tsx](apps/invoice-desktop/src/components/login-dialog.tsx) và
+  [contexts/auth-context.tsx](apps/invoice-desktop/src/contexts/auth-context.tsx) **không còn file nào
+  import** (đăng nhập đã dời sang trang Cài đặt, `_protected` bỏ `AuthProvider`). Đừng sửa 2 file này
+  khi debug luồng đăng nhập — sửa `settings/features.tsx`.
 - **Migration DB**: đã đổi cột bảng `invoices` (đợt redesign schema). File `invoices.db` cũ (trước
-  đợt đó) KHÔNG tương thích → **xóa `%APPDATA%/com.thanhnhut.invoice-desktop/invoices.db`** trước khi
-  chạy (máy này đã xóa; máy khác DB tạo mới tự động nên không cần). **Lưu ý**: 2 cột mới `qrcode`/
-  `hdhhdvu` thêm bằng **ALTER idempotent** nên DB đã có sẵn (sau redesign) **không** cần xoá lại.
+  đợt đó) KHÔNG tương thích → xoá là xong (nay lại càng không đụng tới vì đã đổi thư mục dữ liệu).
+  **Lưu ý**: 2 cột mới `qrcode`/`hdhhdvu` thêm bằng **ALTER idempotent** nên DB có sẵn không cần xoá.
 - **Render PDF cần trình duyệt**: `download_invoices` gọi Edge/Chrome headless để tạo PDF → **máy đích
   phải cài Edge hoặc Chrome** (hoặc set env `INVOICE_BROWSER` trỏ tới binary). Không có → tải được XML
   nhưng PDF lỗi (ghi vào `errors`). Đã thử nhúng **nền + QR vào PDF** nhưng **rewind bỏ** — PDF hiện
   render theo `invoice.html` gốc trong ZIP.
-- **Lỗi TS6133 tồn sẵn** ở `contexts/sync-context.tsx`, `hooks/use-online.ts` (import/biến thừa) →
-  chặn `pnpm build` (tsc) nhưng **KHÔNG** chặn `pnpm tauri dev`. (`purchase.tsx` vẫn sạch sau khi đưa
-  filter lên URL.) Dọn khi rảnh.
+- **`tsc --noEmit` hiện SẠCH** (lỗi TS6133 cũ ở `sync-context.tsx`/`use-online.ts` đã dọn) — giữ vậy,
+  đừng để trôi lại. Chạy **trong `apps/invoice-desktop`** (xem §8).
 - **Filter đã lên URL** (search params) — KHÔNG còn ở state cục bộ. Nếu thêm route điều hướng tới
   `/lookups/invoice/purchase` phải kèm `search: { page, size }` (xem 6.6) nếu không sẽ lỗi type.
+- **Sidebar Cài đặt không sáng mục nào**:
+  [settings/route.tsx](apps/invoice-desktop/src/routes/_protected/settings/route.tsx) còn
+  `isActive={item.name === "Messages & media"}` — sót từ template shadcn, luôn `false`. Nên đổi sang
+  so pathname như [nav-main.tsx](apps/invoice-desktop/src/components/nav-main.tsx) đang làm.
+- **Breadcrumb thiếu `/settings/*`**: [nav-header.tsx](apps/invoice-desktop/src/components/nav-header.tsx)
+  chưa có nhánh `routeId` cho các trang Cài đặt → rơi về nhãn mặc định "Bảng điều khiển".
+- `/settings/notifications` mới là placeholder "Tính năng đang phát triển".
 - **Ngày COA cũ dạng ISO**: COA nào lỡ nhập trước khi đổi định dạng (bằng `type=date`) đang lưu ISO
   trong DB — vẫn **hiển thị & khớp export đúng** nhờ chuẩn hoá (`formatVnDate`/`dates_match`); chưa
   migrate chuỗi ISO→`dd/mm/yyyy` trong DB (để ngỏ, làm khi cần).
-- **Chưa làm**: hóa đơn bán ra (`/sold`, đảo vai nbmst/nmmst), hiển thị profile, Tauri updater
-  (cần `tauri signer generate` + GitHub Releases), event `sync://idle` để tắt banner khi bắt kịp.
+- **Chưa làm**: hóa đơn bán ra (`/sold` mới có guard + khung rỗng, cần đảo vai nbmst/nmmst); trang
+  "Bảng điều khiển" (mục sidebar còn `url: "#"`); Tauri updater (cần `tauri signer generate` +
+  GitHub Releases). Command `profile` **vẫn còn** nhưng **không nơi nào gọi** sau khi bỏ loader ở
+  `_protected` — muốn hiện thông tin NNT thì gọi lại từ trang Cài đặt.
 
 ---
 
@@ -304,10 +396,15 @@ cd apps/invoice-desktop && pnpm install
 # Chạy app (Vite + Tauri). routeTree.gen.ts tự sinh khi dev chạy.
 pnpm tauri dev
 
+# Kiểm kiểu FE — PHẢI chạy trong apps/invoice-desktop
+# (ở gốc repo sẽ lỗi ERR_PNPM_RECURSIVE_EXEC_NO_PACKAGE). Hiện đang SẠCH.
+pnpm exec tsc --noEmit
+
 # Backend
 cargo build --workspace
-cargo test -p hddt -p store            # hddt 9, store 18 (KHÔNG cần mạng)
-cargo test -p invoice-desktop          # unit test: is_valid_code, parse_flex_date, dates_match, sync
+cargo check -p invoice-desktop         # nhanh, dùng khi chỉ sửa Rust của app
+cargo test -p hddt -p store            # hddt 9, store 20 (KHÔNG cần mạng)
+cargo test -p invoice-desktop          # 7 test: is_valid_code, parse_flex_date, dates_match, sync window
 
 # Sinh lại route khi thêm/sửa file trong src/routes (nếu dev server không chạy)
 pnpm dlx @tanstack/router-cli generate
@@ -316,22 +413,32 @@ pnpm dlx @tanstack/router-cli generate
 HDDT_USER=<MST> HDDT_PASS=<mật khẩu đúng> cargo run -p captcha --bin login
 ```
 
-Kiểm thử end-to-end: bật spawn sync (mục 7) → `pnpm tauri dev` → đăng nhập (mật khẩu đúng) →
-sync backfill → bảng purchase hiện hóa đơn theo field mới. Kiểm thêm (mục 6.6): mở **Chi tiết** (lần
-đầu gọi API detail + cache QR/hàng hoá), **Copy** dán Google Sheets, **Tải xuống** (XML+PDF, cần
-Edge/Chrome), **Filter** (nbmst/khhdon dò chứa, shdon khớp, 3 Select khmshdon/tthai/ttxly, Range Picker
-ngày lập → Lọc/Xoá lọc); đổi filter/trang rồi mở **Chi tiết → Back** thấy **filter + trang khôi phục**
-từ URL (F5 cũng giữ). Chức năng mạng phải đăng nhập GDT thật nên không tự chạy được.
+Kiểm thử end-to-end (`pnpm tauri dev`):
+1. Mở app → rơi thẳng vào **/settings/features** (không còn màn đăng nhập).
+2. Gạt **Quản lý hoá đơn** → nhập MST + **mật khẩu ĐÚNG** + ngày thành lập → mục "Hoá đơn" hiện ở
+   sidebar, sync backfill chạy, panel Cài đặt cập nhật "Tải lịch sử / Khoảng đã tải / Đồng bộ gần nhất".
+3. **Trong lúc đang đồng bộ**: ô Mật khẩu mới + nút chọn ngày + nút Lưu **xám**, có dòng "Đang đồng
+   bộ — …"; xong 1 lượt thì **tự mở lại** (event `sync://busy=false`, không cần F5).
+4. Trang purchase (mục 6.6): **Chi tiết** (lần đầu gọi API detail + cache QR/hàng hoá), **Copy** dán
+   Google Sheets, **Tải xuống** (XML+PDF, cần Edge/Chrome), **Filter** (nbmst/khhdon dò chứa, shdon
+   khớp, 3 Select khmshdon/tthai/ttxly, **Range Picker** — thử đổi sang khoảng ở tháng xa hẳn, phải
+   chọn được); đổi filter/trang rồi **Chi tiết → Back** thấy filter + trang khôi phục từ URL (F5 cũng giữ).
+5. Gạt **tắt** từng module → dữ liệu module đó bị xoá, mục sidebar biến mất, vào thẳng URL bị đẩy về
+   /settings/features.
+
+Chức năng mạng phải đăng nhập GDT thật nên không tự chạy được. ⚠️ Luôn dùng **mật khẩu đúng** (§0).
 
 ---
 
 ## 9. Vị trí dữ liệu & môi trường máy mới
 
-- **DB**: `%APPDATA%/com.thanhnhut.invoice-desktop/invoices.db` (Tauri `app_data_dir`).
-- **File COA**: `%APPDATA%/com.thanhnhut.invoice-desktop/coa/<uuidv7>.<ext>` (cạnh DB; DB giữ path
+- **DB**: `%APPDATA%/ich-toolkit/invoices.db` (Tauri `app_data_dir`, suy từ `identifier`).
+  ⚠️ Bản cũ nằm ở `%APPDATA%/com.thanhnhut.invoice-desktop/` — xem §7.
+- **File COA**: `%APPDATA%/ich-toolkit/coa/<uuidv7>.<ext>` (cạnh DB; DB giữ path
   tương đối). **KHÔNG theo repo** → máy mới bắt đầu rỗng, tải/nhập lại.
 - **Keychain**: Windows Credential Manager, service `com.thanhnhut.invoice-desktop`
-  (entry `username`/`password`/`token`). **Không theo repo** → máy mới phải đăng nhập lại.
+  (entry `username`/`password`/`token`) — **giữ tên cũ**, không đổi theo `identifier`.
+  **Không theo repo** → máy mới phải đăng nhập lại.
 - **Templates captcha**: `apps/invoice-desktop/src-tauri/templates/` (commit, bundle theo version).
 - **Dataset train**: `apps/captcha/dataset/` (gitignored).
 - **Yêu cầu máy mới**: Rust toolchain mới (crate riêng dùng edition 2024), Node + pnpm, Tauri v2
@@ -341,7 +448,9 @@ từ URL (F5 cũng giữ). Chức năng mạng phải đăng nhập GDT thật n
 
 ## 10. Mang sang máy khác (QUAN TRỌNG)
 
-Các thay đổi gần đây **có thể chưa commit**. Để máy khác nhận được:
+⚠️ Tại thời điểm cập nhật tài liệu này, **toàn bộ đợt "bật/tắt module + trang Cài đặt" CHƯA COMMIT**
+(`git status` còn ~36 file sửa + 5 file mới: `settings/route.tsx`, `settings/features.tsx`,
+`settings/accessibilitys.tsx`, `ui/switch.tsx`, `ui/radio-group.tsx`). Để máy khác nhận được:
 
 ```bash
 git add -A
