@@ -21,6 +21,7 @@ import {
   RowSelectionState,
 } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
+import InvoiceCsvDownload from "@/components/invoice_csv_download";
 import { api, pickFolder, type Invoice, type Paged } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import {
@@ -517,7 +518,11 @@ function RouteComponent() {
     try {
       const res = await api.downloadInvoices(selectedIds, dir);
       if (res.downloaded > 0)
-        toast.success(`Đã tải ${res.downloaded} hoá đơn (XML + PDF)`);
+        toast.success(
+          res.path
+            ? `Đã tải ${res.downloaded} hoá đơn → ${res.path}`
+            : `Đã tải ${res.downloaded} hoá đơn (XML + PDF)`,
+        );
       if (res.errors.length)
         toast.error(
           `${res.errors.length} hoá đơn lỗi: ${res.errors[0].reason}`,
@@ -551,7 +556,7 @@ function RouteComponent() {
   }, [pageCount, search.page, navigate]);
 
   return (
-    <div className="container @container mx-auto py-10">
+    <div className="container @container mx-auto">
       <div className="flex flex-1 flex-col gap-4 p-4">
         {invoices.isError && (
           <div className="rounded-xl border border-red-500 bg-red-500/10 p-3 text-sm text-red-500">
@@ -683,6 +688,7 @@ function RouteComponent() {
             <Button variant="ghost" onClick={clearFilter}>
               Xoá lọc
             </Button>
+            <InvoiceCsvDownload />
             <Button
               variant="secondary"
               disabled={!selectedIds.length || downloading}

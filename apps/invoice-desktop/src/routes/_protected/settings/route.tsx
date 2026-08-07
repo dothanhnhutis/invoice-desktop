@@ -9,8 +9,14 @@ import {
   SidebarMenuItem,
   SidebarProvider,
 } from "@/components/ui/sidebar";
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  useRouterState,
+} from "@tanstack/react-router";
 import { BellIcon, ClipboardCheckIcon, PaintbrushIcon } from "lucide-react";
+import { isLeafActive } from "@/components/nav-main";
 
 export const Route = createFileRoute("/_protected/settings")({
   component: RouteComponent,
@@ -23,16 +29,17 @@ const data = {
       icon: ClipboardCheckIcon,
       url: "/settings/features",
     },
-    { name: "Thông báo", icon: BellIcon, url: "/settings/notifications" },
     {
       name: "Giao diện",
       icon: PaintbrushIcon,
       url: "/settings/accessibilitys",
     },
+    { name: "Thông báo", icon: BellIcon, url: "/settings/notifications" },
   ],
 };
 
 function RouteComponent() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   return (
     <div className="container mx-auto p-4">
       <SidebarProvider className="items-start flex-col md:flex-row min-h-auto">
@@ -51,7 +58,7 @@ function RouteComponent() {
                     <SidebarMenuItem key={item.name}>
                       <SidebarMenuButton
                         render={<Link to={item.url} />}
-                        isActive={item.name === "Messages & media"}
+                        isActive={isLeafActive(item.url, pathname)}
                       >
                         <item.icon />
                         <span>{item.name}</span>

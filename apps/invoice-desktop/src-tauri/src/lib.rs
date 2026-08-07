@@ -7,7 +7,7 @@ use domain::{
     Coa, Invoice, InvoiceFilter, NewCoa, NewRawMaterial, Paged, RawMaterial, RawMaterialFilter,
     SyncState,
 };
-use tauri::{path::BaseDirectory, Manager, State};
+use tauri::{path::BaseDirectory, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 /// Dịch lỗi DB sang thông báo thân thiện (vi phạm UNIQUE = mã trùng).
@@ -206,11 +206,71 @@ struct InvoiceExportError {
 struct ExportInvoiceResult {
     downloaded: u32,
     dir: String,
+    /// Đường dẫn file `.zip` khi tải nhiều hóa đơn; None khi chép rời từng file.
+    path: Option<String>,
     errors: Vec<InvoiceExportError>,
 }
 
+/// Đưa file thành phẩm (đang nằm ở thư mục tạm) về `out_dir`:
+/// - `zip = false` → chép rời từng file, trả `None`.
+/// - `zip = true`  → nén tất cả vào `<zip_base>.zip`, trả đường dẫn file nén.
+///
+/// Tên file/entry lấy nguyên từ thư mục tạm (đã unique sẵn nhờ `unique_path`), trùng với file
+/// có sẵn ở `out_dir` thì `unique_path` tự thêm ` (n)` — không bao giờ ghi đè.
+fn package_outputs(
+    files: &[std::path::PathBuf],
+    out_dir: &std::path::Path,
+    zip_base: &str,
+    zip: bool,
+) -> Result<Option<std::path::PathBuf>, String> {
+    use std::io::Write;
+
+    if !zip {
+        for src in files {
+            let stem = src
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("invoice");
+            let ext = src
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+            std::fs::copy(src, unique_path(out_dir, stem, &ext)).map_err(|e| e.to_string())?;
+        }
+        return Ok(None);
+    }
+
+    let zip_path = unique_path(out_dir, zip_base, ".zip");
+    let file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+    let mut zw = zip::ZipWriter::new(file);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for src in files {
+        let name = src
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("invoice")
+            .to_string();
+        zw.start_file(&name, options).map_err(|e| e.to_string())?;
+        let bytes = std::fs::read(src).map_err(|e| e.to_string())?;
+        zw.write_all(&bytes).map_err(|e| e.to_string())?;
+    }
+    zw.finish().map_err(|e| e.to_string())?;
+    Ok(Some(zip_path))
+}
+
+/// Tên file nén hệ thống tự đặt khi tải nhiều hóa đơn: `HoaDon_<số lượng>_<ngày giờ>`.
+fn auto_zip_base(count: u32) -> String {
+    format!(
+        "HoaDon_{count}_{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    )
+}
+
 /// Tải bản thể hiện hóa đơn (ZIP invoice.html/xml) từ GDT cho từng `id`, render PDF bằng
-/// trình duyệt headless, rồi ghi cặp `<khhdon>_<shdon>.xml` + `.pdf` vào thư mục `dir` người dùng chọn.
+/// trình duyệt headless, rồi đưa cặp `<khhdon>_<shdon>.xml` + `.pdf` về thư mục `dir` người dùng chọn:
+/// **1 hóa đơn → 2 file rời**, **nhiều hóa đơn → nén 1 file `.zip`** (tên hệ thống tự đặt).
 /// Hóa đơn lỗi được gom vào `errors`, không chặn các hóa đơn còn lại.
 #[tauri::command]
 async fn download_invoices(
@@ -227,15 +287,21 @@ async fn download_invoices(
         export::find_browser().ok_or("Không tìm thấy Edge/Chrome trên máy để tạo PDF")?;
     // Lấy token 1 lần (tái dùng cho mọi hóa đơn). Không retry sai mật khẩu (helper lo).
     let token = helper::get_access_token(&state).await?;
-    let temp_root = app
+    // Ghi vào `root/out` trước rồi mới gom về `out_dir` (vì chưa biết sẽ nén hay chép rời);
+    // `root/w-<uuid>` là chỗ giải nén tạm của từng hóa đơn.
+    let root = app
         .path()
         .temp_dir()
         .map_err(|e| e.to_string())?
         .join("invoice-desktop")
-        .join("inv-export");
+        .join("inv-export")
+        .join(uuid::Uuid::now_v7().to_string());
+    let staging = root.join("out");
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
 
     let mut downloaded = 0u32;
     let mut errors: Vec<InvoiceExportError> = Vec::new();
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
 
     for id in ids {
         let inv = match state.db.get_invoice(&id) {
@@ -282,32 +348,37 @@ async fn download_invoices(
 
         // Phần nặng (giải nén + gọi trình duyệt + ghi đĩa) chạy trên thread blocking.
         let browser = browser.clone();
-        let temp_root = temp_root.clone();
-        let out_dir = out_dir.clone();
+        let root_c = root.clone();
+        let staging_c = staging.clone();
         let name = sanitize_filename(&label);
-        let res = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-            let work = temp_root.join(uuid::Uuid::now_v7().to_string());
-            export::extract_zip_to(&zip, &work)?;
-            let html = work.join("invoice.html");
-            let xml = work.join("invoice.xml");
-            if !html.exists() {
-                return Err("ZIP thiếu invoice.html".into());
-            }
-            let pdf_tmp = work.join("invoice.pdf");
-            let pdf_bytes = export::html_to_pdf(&browser, &html, &pdf_tmp)?;
-            let xml_bytes = std::fs::read(&xml).map_err(|e| e.to_string())?;
-            std::fs::write(unique_path(&out_dir, &name, ".xml"), &xml_bytes)
-                .map_err(|e| e.to_string())?;
-            std::fs::write(unique_path(&out_dir, &name, ".pdf"), &pdf_bytes)
-                .map_err(|e| e.to_string())?;
-            let _ = std::fs::remove_dir_all(&work); // dọn temp (best-effort)
-            Ok(())
-        })
+        let res = tauri::async_runtime::spawn_blocking(
+            move || -> Result<Vec<std::path::PathBuf>, String> {
+                let work = root_c.join(format!("w-{}", uuid::Uuid::now_v7()));
+                export::extract_zip_to(&zip, &work)?;
+                let html = work.join("invoice.html");
+                let xml = work.join("invoice.xml");
+                if !html.exists() {
+                    return Err("ZIP thiếu invoice.html".into());
+                }
+                let pdf_tmp = work.join("invoice.pdf");
+                let pdf_bytes = export::html_to_pdf(&browser, &html, &pdf_tmp)?;
+                let xml_bytes = std::fs::read(&xml).map_err(|e| e.to_string())?;
+                let p_xml = unique_path(&staging_c, &name, ".xml");
+                std::fs::write(&p_xml, &xml_bytes).map_err(|e| e.to_string())?;
+                let p_pdf = unique_path(&staging_c, &name, ".pdf");
+                std::fs::write(&p_pdf, &pdf_bytes).map_err(|e| e.to_string())?;
+                let _ = std::fs::remove_dir_all(&work); // dọn temp (best-effort)
+                Ok(vec![p_xml, p_pdf])
+            },
+        )
         .await
         .map_err(|e| e.to_string())?;
 
         match res {
-            Ok(()) => downloaded += 1,
+            Ok(mut paths) => {
+                downloaded += 1;
+                files.append(&mut paths);
+            }
             Err(e) => errors.push(InvoiceExportError {
                 id: id.clone(),
                 label,
@@ -316,9 +387,289 @@ async fn download_invoices(
         }
     }
 
+    // Nhiều hơn 1 hóa đơn -> nén; đúng 1 hóa đơn -> để rời 2 file .xml/.pdf.
+    let path = if files.is_empty() {
+        None
+    } else {
+        package_outputs(
+            &files,
+            &out_dir,
+            &auto_zip_base(downloaded),
+            downloaded > 1,
+        )?
+    };
+    let _ = std::fs::remove_dir_all(&root); // dọn temp (best-effort)
+
     Ok(ExportInvoiceResult {
         downloaded,
         dir,
+        path: path.map(|p| p.to_string_lossy().to_string()),
+        errors,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct InvoiceCsvError {
+    line: usize,
+    label: String,
+    reason: String,
+}
+
+#[derive(serde::Serialize)]
+struct InvoiceCsvResult {
+    downloaded: u32,
+    /// Đường dẫn file kết quả (`.zip`, hoặc file đơn khi chỉ có 1 file). None nếu không tải được gì.
+    path: Option<String>,
+    errors: Vec<InvoiceCsvError>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct InvoiceCsvProgress {
+    done: usize,
+    total: usize,
+    label: String,
+}
+
+/// Nghỉ giữa 2 hóa đơn — cổng GDT không có backoff phía client (`libs/hddt` không throttle),
+/// CSV vài trăm dòng bắn liên tục rất dễ bị chặn. Không đáng kể so với ~2-4s render PDF mỗi hóa đơn.
+const CSV_THROTTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Tải hàng loạt hóa đơn theo file CSV cột `nbmst,khhdon,shdon[,khmshdon]` — đúng 4 khóa mà
+/// `/export-xml` cần, nên **không** đòi hóa đơn phải có sẵn trong DB (khác `download_invoices`).
+/// Mỗi hóa đơn ra cặp `<khhdon>_<shdon>.pdf` + `.xml`; hơn 1 file thì nén thành `<tên CSV>.zip`
+/// trong thư mục `dir` người dùng chọn. `khmshdon` thiếu/rỗng → mặc định `"1"` (hóa đơn GTGT).
+/// Dòng lỗi gom vào `errors`, không chặn các dòng còn lại. Phát `invoice-csv://progress` theo tiến độ.
+#[tauri::command]
+async fn download_invoices_from_csv(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    csv_bytes: Vec<u8>,
+    base_name: String,
+    dir: String,
+) -> Result<InvoiceCsvResult, String> {
+    // Kiểm tra sớm, trước khi đụng mạng.
+    let out_dir = std::path::PathBuf::from(&dir);
+    if !out_dir.is_dir() {
+        return Err("Thư mục lưu không hợp lệ".into());
+    }
+    let browser =
+        export::find_browser().ok_or("Không tìm thấy Edge/Chrome trên máy để tạo PDF")?;
+
+    let bytes: &[u8] = csv_bytes
+        .strip_prefix(&[0xEF, 0xBB, 0xBF])
+        .unwrap_or(&csv_bytes);
+    let mut rdr = csv::ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(bytes);
+
+    // Map header theo tên, không phân biệt hoa thường.
+    let headers = rdr
+        .headers()
+        .map_err(|e| format!("Không đọc được header CSV: {e}"))?;
+    let (mut i_nbmst, mut i_khhdon, mut i_shdon, mut i_khmshdon) = (None, None, None, None);
+    for (i, h) in headers.iter().enumerate() {
+        match h.trim().to_lowercase().as_str() {
+            "nbmst" => i_nbmst = Some(i),
+            "khhdon" => i_khhdon = Some(i),
+            "shdon" => i_shdon = Some(i),
+            "khmshdon" => i_khmshdon = Some(i),
+            _ => {}
+        }
+    }
+    let mut missing: Vec<&str> = Vec::new();
+    if i_nbmst.is_none() {
+        missing.push("nbmst");
+    }
+    if i_khhdon.is_none() {
+        missing.push("khhdon");
+    }
+    if i_shdon.is_none() {
+        missing.push("shdon");
+    }
+    if !missing.is_empty() {
+        return Err(format!("File CSV thiếu cột: {}", missing.join(", ")));
+    }
+    let (i_nbmst, i_khhdon, i_shdon) = (i_nbmst.unwrap(), i_khhdon.unwrap(), i_shdon.unwrap());
+
+    // Gom dòng hợp lệ TRƯỚC (để biết `total` cho tiến độ), khử trùng theo 4 khóa.
+    let mut errors: Vec<InvoiceCsvError> = Vec::new();
+    let mut rows: Vec<(usize, String, String, String, String)> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, String, String, String)> =
+        std::collections::HashSet::new();
+    for (i, rec) in rdr.records().enumerate() {
+        let line = i + 2; // +1 header, +1 để về 1-based
+        let rec = match rec {
+            Ok(r) => r,
+            Err(_) => {
+                errors.push(InvoiceCsvError {
+                    line,
+                    label: String::new(),
+                    reason: "Dòng CSV không hợp lệ".into(),
+                });
+                continue;
+            }
+        };
+        let get = |idx: usize| rec.get(idx).unwrap_or("").trim().to_string();
+        // Giữ nguyên dạng chuỗi: `nbmst` có thể là "0106678187-001".
+        let (nbmst, khhdon, shdon) = (get(i_nbmst), get(i_khhdon), get(i_shdon));
+        let khmshdon = i_khmshdon
+            .map(get)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "1".into());
+
+        if nbmst.is_empty() || khhdon.is_empty() || shdon.is_empty() {
+            errors.push(InvoiceCsvError {
+                line,
+                label: format!("{khhdon}_{shdon}"),
+                reason: "Thiếu nbmst/khhdon/shdon".into(),
+            });
+            continue;
+        }
+        // Dòng trùng lặp -> bỏ qua lặng lẽ, không tính là lỗi.
+        if !seen.insert((
+            nbmst.clone(),
+            khhdon.clone(),
+            shdon.clone(),
+            khmshdon.clone(),
+        )) {
+            continue;
+        }
+        rows.push((line, nbmst, khhdon, shdon, khmshdon));
+    }
+
+    if rows.is_empty() {
+        return Ok(InvoiceCsvResult {
+            downloaded: 0,
+            path: None,
+            errors,
+        });
+    }
+
+    // Lấy token 1 lần cho cả lượt (helper lo cache/hết hạn; KHÔNG tự retry khi sai mật khẩu).
+    let token = helper::get_access_token(&state).await?;
+    // `root/out` chứa file thành phẩm, `root/w-<uuid>` là chỗ giải nén tạm -> zip chỉ lấy từ `files`.
+    let root = app
+        .path()
+        .temp_dir()
+        .map_err(|e| e.to_string())?
+        .join("invoice-desktop")
+        .join("inv-csv")
+        .join(uuid::Uuid::now_v7().to_string());
+    let staging = root.join("out");
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+
+    let total = rows.len();
+    let mut downloaded = 0u32;
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+
+    for (done, (line, nbmst, khhdon, shdon, khmshdon)) in rows.into_iter().enumerate() {
+        let label = format!("{khhdon}_{shdon}");
+        let _ = app.emit(
+            "invoice-csv://progress",
+            InvoiceCsvProgress {
+                done,
+                total,
+                label: label.clone(),
+            },
+        );
+        if done > 0 {
+            tokio::time::sleep(CSV_THROTTLE).await;
+        }
+
+        let zip = match hddt::export_html(
+            &state.client,
+            &token,
+            &nbmst,
+            &khhdon,
+            &shdon,
+            &khmshdon,
+        )
+        .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                errors.push(InvoiceCsvError {
+                    line,
+                    label,
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+
+        // Phần nặng (giải nén + gọi trình duyệt + ghi đĩa) chạy trên thread blocking.
+        let browser = browser.clone();
+        let root_c = root.clone();
+        let staging_c = staging.clone();
+        let name = sanitize_filename(&label);
+        let res = tauri::async_runtime::spawn_blocking(
+            move || -> Result<Vec<std::path::PathBuf>, String> {
+                let work = root_c.join(format!("w-{}", uuid::Uuid::now_v7()));
+                export::extract_zip_to(&zip, &work)?;
+                let html = work.join("invoice.html");
+                let xml = work.join("invoice.xml");
+                if !html.exists() {
+                    return Err("ZIP thiếu invoice.html".into());
+                }
+                let pdf_bytes = export::html_to_pdf(&browser, &html, &work.join("invoice.pdf"))?;
+                let xml_bytes = std::fs::read(&xml).map_err(|e| e.to_string())?;
+                let p_xml = unique_path(&staging_c, &name, ".xml");
+                std::fs::write(&p_xml, &xml_bytes).map_err(|e| e.to_string())?;
+                let p_pdf = unique_path(&staging_c, &name, ".pdf");
+                std::fs::write(&p_pdf, &pdf_bytes).map_err(|e| e.to_string())?;
+                let _ = std::fs::remove_dir_all(&work); // dọn temp (best-effort)
+                Ok(vec![p_xml, p_pdf])
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        match res {
+            Ok(mut paths) => {
+                downloaded += 1;
+                files.append(&mut paths);
+            }
+            Err(e) => errors.push(InvoiceCsvError {
+                line,
+                label,
+                reason: e,
+            }),
+        }
+    }
+    let _ = app.emit(
+        "invoice-csv://progress",
+        InvoiceCsvProgress {
+            done: total,
+            total,
+            label: String::new(),
+        },
+    );
+
+    if files.is_empty() {
+        let _ = std::fs::remove_dir_all(&root);
+        return Ok(InvoiceCsvResult {
+            downloaded: 0,
+            path: None,
+            errors,
+        });
+    }
+
+    // Hơn 1 file -> nén thành `<tên CSV>.zip`; đúng 1 file -> chép thẳng.
+    let zip_base = if base_name.trim().is_empty() {
+        "invoices".to_string()
+    } else {
+        sanitize_filename(&base_name)
+    };
+    let out_path = package_outputs(&files, &out_dir, &zip_base, files.len() > 1)?;
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = app.opener().open_path(dir, None::<String>); // mở thư mục đích cho tiện
+
+    Ok(InvoiceCsvResult {
+        downloaded,
+        path: out_path.map(|p| p.to_string_lossy().to_string()),
         errors,
     })
 }
@@ -1213,6 +1564,7 @@ pub fn run() {
             list_invoices,
             get_invoice_detail,
             download_invoices,
+            download_invoices_from_csv,
             get_raw_material_by_id,
             list_raw_materials,
             create_raw_material,

@@ -52,6 +52,7 @@ const navMain: (NavLinkType | NavLinkGroup)[] = [
     icon: SettingsIcon,
     title: "Cài đặt",
     url: "/settings/features",
+    match: "/settings", // sáng ở mọi trang con của Cài đặt
   },
 ];
 

@@ -166,7 +166,27 @@ export type InvoiceExportError = {
 export type ExportInvoiceResult = {
   downloaded: number;
   dir: string;
+  path: string | null; // file .zip khi tải nhiều hoá đơn; null khi chép rời
   errors: InvoiceExportError[];
+};
+
+export type InvoiceCsvError = {
+  line: number;
+  label: string;
+  reason: string;
+};
+
+export type InvoiceCsvResult = {
+  downloaded: number;
+  path: string | null; // file .zip (hoặc file đơn) đã ghi
+  errors: InvoiceCsvError[];
+};
+
+// Payload sự kiện "invoice-csv://progress" phát từ download_invoices_from_csv.
+export type InvoiceCsvProgress = {
+  done: number;
+  total: number;
+  label: string;
 };
 
 export type ImportResult = {
@@ -207,9 +227,26 @@ export const api = {
   /** Lấy chi tiết 1 hóa đơn (lazy-load qrcode + hdhhdvu, cache ở DB). */
   getInvoiceDetail: (id: string) =>
     call<Invoice>("get_invoice_detail", { id }),
-  /** Tải hóa đơn (XML + PDF) về thư mục `dir`. Trả số tải được + lỗi từng hóa đơn. */
+  /**
+   * Tải hóa đơn (XML + PDF) về thư mục `dir`: 1 hoá đơn → 2 file rời, nhiều hoá đơn → 1 file
+   * `.zip` (tên do backend tự đặt, trả ở `path`). Trả số tải được + lỗi từng hóa đơn.
+   */
   downloadInvoices: (ids: string[], dir: string) =>
     call<ExportInvoiceResult>("download_invoices", { ids, dir }),
+  /**
+   * Tải hàng loạt hóa đơn theo CSV `nbmst,khhdon,shdon[,khmshdon]` về thư mục `dir`.
+   * Không cần hóa đơn có sẵn trong DB. Nhiều hơn 1 file thì nén thành `<baseName>.zip`.
+   */
+  downloadInvoicesFromCsv: (
+    csvBytes: number[],
+    baseName: string,
+    dir: string,
+  ) =>
+    call<InvoiceCsvResult>("download_invoices_from_csv", {
+      csvBytes,
+      baseName,
+      dir,
+    }),
   listRawMaterials: (
     {
       q,

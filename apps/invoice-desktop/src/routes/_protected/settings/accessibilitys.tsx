@@ -17,11 +17,10 @@ export const Route = createFileRoute("/_protected/settings/accessibilitys")({
 function RouteComponent() {
   const { theme, setTheme } = useTheme();
   return (
-    <div className="flex flex-col gap-2 ">
+    <div className="flex flex-col gap-2">
       <Label>Cài đặt giao diện</Label>
       <RadioGroup
         defaultValue={theme}
-        className="max-w-sm"
         onValueChange={(v) => {
           setTheme(v);
         }}

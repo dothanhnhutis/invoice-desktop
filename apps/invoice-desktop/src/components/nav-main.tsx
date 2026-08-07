@@ -19,14 +19,17 @@ export type NavLinkType = {
   icon?: LucideIcon;
   title: string;
   url: string;
+  /** Tiền tố path để tính active khi khác `url` (vd Cài đặt: bấm sang
+   *  `/settings/features` nhưng sáng ở mọi `/settings/*`). Mặc định = `url`. */
+  match?: string;
 };
 
-export type NavLinkGroup = Omit<NavLinkType, "url"> & {
+export type NavLinkGroup = Omit<NavLinkType, "url" | "match"> & {
   items: (NavLinkType | NavLinkGroup)[];
 };
 
 /** Mục lá active khi route hiện tại khớp `url` (kể cả route con, vd /coas active ở /coas/$id). */
-function isLeafActive(url: string, pathname: string) {
+export function isLeafActive(url: string, pathname: string) {
   if (!url || url === "#") return false;
   return pathname === url || pathname.startsWith(url + "/");
 }
@@ -38,7 +41,7 @@ function hasActive(
 ): boolean {
   return "items" in item
     ? item.items.some((c) => hasActive(c, pathname))
-    : isLeafActive(item.url, pathname);
+    : isLeafActive(item.match ?? item.url, pathname);
 }
 
 function Tree({
@@ -51,7 +54,7 @@ function Tree({
   if (!("items" in item)) {
     return (
       <SidebarMenuButton
-        isActive={isLeafActive(item.url, pathname)}
+        isActive={isLeafActive(item.match ?? item.url, pathname)}
         className="data-[active=true]:bg-transparent"
         render={<Link to={item.url} />}
       >

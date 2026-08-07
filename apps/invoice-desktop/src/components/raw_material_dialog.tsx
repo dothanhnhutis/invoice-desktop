@@ -41,12 +41,66 @@ import {
 
 export type { RawMaterial };
 
-const countries = [
+const VIET_NAM = "Việt Nam";
+
+/**
+ * Tên quốc gia/vùng lãnh thổ bằng tiếng Việt. Thứ tự khai báo ở đây KHÔNG quan trọng —
+ * `countries` bên dưới tự sắp A-Z theo collation tiếng Việt, nên thêm tên mới vào bất kỳ nhóm nào.
+ */
+const COUNTRY_NAMES = [
+  // Châu Á
+  "Afghanistan", "Ả Rập Xê Út", "Armenia", "Azerbaijan", "Ấn Độ", "Bahrain",
+  "Bangladesh", "Bhutan", "Brunei", "Các Tiểu vương quốc Ả Rập Thống nhất",
+  "Campuchia", "Đài Loan", "Gruzia", "Hàn Quốc", "Hồng Kông", "Indonesia",
+  "Iran", "Iraq", "Israel", "Jordan", "Kazakhstan", "Kuwait", "Kyrgyzstan",
+  "Lào", "Liban", "Ma Cao", "Malaysia", "Maldives", "Mông Cổ", "Myanmar",
+  "Nepal", "Nhật Bản", "Oman", "Pakistan", "Palestine", "Philippines", "Qatar",
+  "Singapore", "Síp", "Sri Lanka", "Syria", "Tajikistan", "Thái Lan",
+  "Thổ Nhĩ Kỳ", "Timor-Leste", "Triều Tiên", "Trung Quốc", "Turkmenistan",
+  "Uzbekistan", VIET_NAM, "Yemen",
+
+  // Châu Âu
+  "Albania", "Andorra", "Anh", "Áo", "Ba Lan", "Bắc Macedonia", "Belarus", "Bỉ",
+  "Bosnia và Herzegovina", "Bồ Đào Nha", "Bulgaria", "Cộng hòa Séc", "Croatia",
+  "Đan Mạch", "Đức", "Estonia", "Hà Lan", "Hungary", "Hy Lạp", "Iceland",
+  "Ireland", "Kosovo", "Latvia", "Liechtenstein", "Litva", "Luxembourg",
+  "Malta", "Moldova", "Monaco", "Montenegro", "Na Uy", "Nga", "Pháp",
+  "Phần Lan", "Romania", "San Marino", "Serbia", "Slovakia", "Slovenia",
+  "Tây Ban Nha", "Thụy Điển", "Thụy Sĩ", "Ukraina", "Vatican", "Ý",
+
+  // Châu Mỹ
+  "Antigua và Barbuda", "Argentina", "Bahamas", "Barbados", "Belize", "Bolivia",
+  "Brazil", "Canada", "Chile", "Colombia", "Costa Rica", "Cộng hòa Dominica",
+  "Cuba", "Dominica", "Ecuador", "El Salvador", "Grenada", "Guatemala",
+  "Guyana", "Haiti", "Honduras", "Jamaica", "Mexico", "Mỹ", "Nicaragua",
+  "Panama", "Paraguay", "Peru", "Saint Kitts và Nevis", "Saint Lucia",
+  "Saint Vincent và Grenadines", "Suriname", "Trinidad và Tobago", "Uruguay",
+  "Venezuela",
+
+  // Châu Phi
+  "Ai Cập", "Algeria", "Angola", "Benin", "Bờ Biển Ngà", "Botswana",
+  "Burkina Faso", "Burundi", "Cameroon", "Cape Verde", "Chad", "Comoros",
+  "Cộng hòa Congo", "Cộng hòa Dân chủ Congo", "Cộng hòa Trung Phi", "Djibouti",
+  "Eritrea", "Eswatini", "Ethiopia", "Gabon", "Gambia", "Ghana", "Guinea",
+  "Guinea Xích Đạo", "Guinea-Bissau", "Kenya", "Lesotho", "Liberia", "Libya",
+  "Madagascar", "Malawi", "Mali", "Maroc", "Mauritania", "Mauritius",
+  "Mozambique", "Nam Phi", "Nam Sudan", "Namibia", "Niger", "Nigeria", "Rwanda",
+  "São Tomé và Príncipe", "Senegal", "Seychelles", "Sierra Leone", "Somalia",
+  "Sudan", "Tanzania", "Togo", "Tunisia", "Uganda", "Zambia", "Zimbabwe",
+
+  // Châu Đại Dương
+  "Fiji", "Kiribati", "Micronesia", "Nauru", "New Zealand", "Palau",
+  "Papua New Guinea", "Quần đảo Marshall", "Quần đảo Solomon", "Samoa", "Tonga",
+  "Tuvalu", "Úc", "Vanuatu",
+];
+
+// Việt Nam luôn trên cùng; phần còn lại A-Z theo tiếng Việt (Đ sau D, Ă/Â sau A…).
+const countries: { label: string; value: string | null }[] = [
   { label: "Chọn quốc gia", value: null },
-  { label: "Việt Nam", value: "Việt Nam" },
-  { label: "Trung Quốc", value: "Trung Quốc" },
-  { label: "Ý", value: "Ý" },
-  { label: "Hàn Quốc", value: "Hàn Quốc" },
+  { label: VIET_NAM, value: VIET_NAM },
+  ...COUNTRY_NAMES.filter((n) => n !== VIET_NAM)
+    .sort(new Intl.Collator("vi").compare)
+    .map((n) => ({ label: n, value: n })),
 ];
 
 export type RawMaterialDialogProps = {
@@ -87,6 +141,15 @@ const RawMaterialDialog = ({
   };
 
   const queryClient = useQueryClient();
+
+  // Bản ghi cũ có thể mang tên không còn trong danh sách (vd "Brazin", "Tây Bán Nha",
+  // "Thuỵ Sỹ") -> chèn thêm để Select không hiện trống khi sửa.
+  const options = React.useMemo(() => {
+    const current = data?.country_of_origin;
+    return current && !countries.some((c) => c.value === current)
+      ? [...countries, { label: current, value: current }]
+      : countries;
+  }, [data?.country_of_origin]);
 
   const form = useForm({
     defaultValues: {
@@ -254,7 +317,7 @@ const RawMaterialDialog = ({
                 <Field>
                   <FieldLabel htmlFor={field.name}>Quốc gia</FieldLabel>
                   <Select
-                    items={countries}
+                    items={options}
                     defaultValue={field.state.value}
                     onValueChange={field.handleChange}
                   >
@@ -263,8 +326,8 @@ const RawMaterialDialog = ({
                     </SelectTrigger>
                     <SelectContent onBlur={field.handleBlur}>
                       <SelectGroup>
-                        {countries.map((item) => (
-                          <SelectItem key={item.value} value={item.value}>
+                        {options.map((item) => (
+                          <SelectItem key={item.value ?? "none"} value={item.value}>
                             {item.label}
                           </SelectItem>
                         ))}

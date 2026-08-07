@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import { useState } from "react";
-import { DownloadIcon } from "lucide-react";
+import { CopyIcon, DownloadIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, pickFolder, type InvoiceLine } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -105,6 +105,19 @@ function RouteComponent() {
   const tdlap = typeof raw.tdlap === "string" ? raw.tdlap : null;
   const mhdon = typeof raw.mhdon === "string" ? raw.mhdon : null;
 
+  // Copy 4 khoá hoá đơn (dán được thẳng vào Excel/CSV) — giống menu ở trang danh sách.
+  const onCopy = async () => {
+    if (!inv) return;
+    try {
+      await navigator.clipboard.writeText(
+        `${inv.nbmst}\t${inv.khhdon}\t${inv.shdon}\t${inv.khmshdon}`,
+      );
+      toast.success("Đã copy khóa hoá đơn");
+    } catch {
+      toast.error("Copy thất bại");
+    }
+  };
+
   const onDownload = async () => {
     const dir = await pickFolder();
     if (!dir) return;
@@ -126,6 +139,21 @@ function RouteComponent() {
 
   return (
     <div className="container mx-auto flex flex-col gap-4 p-4">
+      <div className="mt-2 flex flex-wrap gap-2 sm:justify-end">
+        <Button variant="outline" size="sm" onClick={onCopy}>
+          <CopyIcon />
+          Copy khoá HĐ
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={downloading}
+          onClick={onDownload}
+        >
+          {downloading ? <Spinner /> : <DownloadIcon />}
+          Tải xuống (XML + PDF)
+        </Button>
+      </div>
       {detail.isLoading && (
         <div className="flex items-center gap-2 rounded-xl border p-4 text-sm text-muted-foreground">
           <Spinner /> Đang tải chi tiết hóa đơn…
@@ -163,16 +191,6 @@ function RouteComponent() {
               <p>
                 Số HĐ: <b>{inv.shdon}</b>
               </p>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-2"
-                disabled={downloading}
-                onClick={onDownload}
-              >
-                {downloading ? <Spinner /> : <DownloadIcon />}
-                Tải xuống (XML + PDF)
-              </Button>
             </div>
           </div>
 

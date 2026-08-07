@@ -31,10 +31,9 @@ function RootComponent() {
       <TooltipProvider>
         <main>
           <Outlet />
-          <ReactQueryDevtools buttonPosition="bottom-right" />
-          <TanStackRouterDevtools position="bottom-right" />
         </main>
-
+        <ReactQueryDevtools buttonPosition="bottom-left" />
+        <TanStackRouterDevtools position="bottom-left" />
         <OnlineFooter />
         <Toaster />
       </TooltipProvider>

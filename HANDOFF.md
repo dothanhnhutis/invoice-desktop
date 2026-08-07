@@ -3,14 +3,15 @@
 Tài liệu bàn giao để **tiếp tục công việc ở máy khác**. Đây là nguồn ngữ cảnh chính (memory
 của Claude nằm ở `~/.claude/...` **cục bộ theo máy**, không theo repo).
 
-> Cập nhật lần cuối: phiên **bật/tắt module + trang Cài đặt**. Thay đổi lớn nhất: **app KHÔNG còn bắt
-> buộc đăng nhập GDT** — vào thẳng `/settings/features`; "Hoá đơn" và "Nguyên liệu & COA" trở thành 2
-> **module bật/tắt** ở trang Cài đặt (tắt = xoá dữ liệu module đó, route bị chặn, mục sidebar ẩn).
-> Kèm theo: cờ **đang đồng bộ** (`sync://busy` + `is_syncing`) khoá form đổi mật khẩu/mốc thời gian,
-> panel trạng thái đồng bộ dời từ trang hoá đơn sang Cài đặt, sửa lỗi **không chọn được khoảng ngày
-> xa hơn** ở Range Picker, và đổi tên app thành **ICH Toolkit** (⚠️ đổi luôn `identifier` → thư mục dữ
-> liệu mới, xem §7 + §9). (Trước đó: bộ lọc hoá đơn + filter/phân trang trên URL; chi tiết hoá đơn &
-> tải XML+PDF; hệ Nguyên liệu + COA.)
+> Cập nhật lần cuối: phiên **tải hoá đơn theo file CSV**. Thay đổi lớn nhất: lệnh mới
+> **`download_invoices_from_csv`** — nạp CSV `nbmst,khhdon,shdon[,khmshdon]` rồi tải hàng loạt, **không
+> cần hoá đơn có sẵn trong DB** (CSV đã đủ 4 khoá mà `/export-xml` cần), có tiến độ realtime
+> `invoice-csv://progress`. Kèm theo: **đổi quy tắc đóng gói khi tải xuống** (1 hoá đơn → 2 file rời;
+> nhiều hoá đơn → 1 `.zip` tên tự đặt), nút **Copy khoá HĐ** ở trang chi tiết, và **sửa nav Cài đặt**
+> (sidebar con + mục "Cài đặt" ở sidebar chính giờ sáng đúng). (Trước đó: bật/tắt module + trang Cài
+> đặt, app không còn bắt buộc đăng nhập GDT, đổi tên **ICH Toolkit** → đổi `identifier` nên thư mục dữ
+> liệu đổi theo, xem §7 + §9; trước nữa: bộ lọc hoá đơn trên URL, chi tiết hoá đơn & tải XML+PDF, hệ
+> Nguyên liệu + COA.)
 > Nếu bạn sửa tiếp, cập nhật lại phần **Trạng thái** và **Việc còn dang dở** bên dưới.
 
 ---
@@ -97,6 +98,13 @@ sidebar **active theo route** (`useRouterState` pathname, `/coas` active cả �
 hardcode `isActive`. [app-sidebar.tsx](apps/invoice-desktop/src/components/app-sidebar.tsx) **lọc mục
 theo cờ tính năng** (module tắt → ẩn mục) và **đã bỏ `NavUser`** (file `nav-user.tsx` bị xoá).
 
+⚠️ **Đích điều hướng ≠ phạm vi active**: `NavLinkType` có trường tuỳ chọn **`match`** (tiền tố path để
+tính active, mặc định `= url`). Dùng cho mục **Cài đặt**: `url: "/settings/features"` nhưng
+`match: "/settings"` nên nó sáng ở cả `notifications`/`accessibilitys`. Thêm mục mới mà đích trỏ vào 1
+trang con thì nhớ khai `match`. Sidebar **con** của trang Cài đặt
+([settings/route.tsx](apps/invoice-desktop/src/routes/_protected/settings/route.tsx)) dùng lại hàm
+`isLeafActive` **export từ `nav-main.tsx`** — đừng viết lại logic so khớp lần thứ ba.
+
 ---
 
 ## 3. Luồng auth + token
@@ -156,8 +164,9 @@ Auth/sync/hóa đơn: `login`, `logout`, `profile`, `set_credentials`, `clear_cr
 **`disable_invoices`** (tắt module hoá đơn), `get_sync_status`, `list_invoices(filter)` **→ `Paged<Invoice>`** (phân trang server:
 `filter.limit`/`filter.offset` + `count_invoices`; filter có `nbmst/khhdon/shdon/khmshdon` **+ `tthai`/`ttxly`**),
 `get_invoice_detail(id)` **→ `Invoice`** (lazy-load `qrcode`+`hdhhdvu`: gọi API detail rồi cache DB —
-xem 6.6), `download_invoices(ids, dir)` **→ `ExportInvoiceResult {downloaded, dir, errors}`** (tải
-XML+PDF về `dir` — xem 6.6), `get_floor`, `set_floor(date)` (date = ISO `yyyy-MM-dd`).
+xem 6.6), `download_invoices(ids, dir)` **→ `ExportInvoiceResult {downloaded, dir, path, errors}`**,
+**`download_invoices_from_csv(csv_bytes, base_name, dir)`** **→ `InvoiceCsvResult {downloaded, path,
+errors}`** (tải hàng loạt theo CSV — xem 6.6), `get_floor`, `set_floor(date)` (date = ISO `yyyy-MM-dd`).
 
 Plugin thêm: `tauri_plugin_dialog` (hộp thoại chọn thư mục lưu — cần `dialog:default` trong
 `capabilities/default.json`).
@@ -252,19 +261,47 @@ dịch vụ (parse `hdhhdvu` + "Số lô"/"Hạn dùng" từ `ttkhac`); tổng g
 
 **Cột Hành động = DropdownMenu** ([purchase.tsx](apps/invoice-desktop/src/routes/_protected/lookups/invoice/purchase.tsx)):
 Xem chi tiết / **Copy** (chỉ giá trị, tab-separated `nbmst\tkhhdon\tshdon\tkhmshdon` — dán Google
-Sheets) / **Tải xuống**.
+Sheets) / **Tải xuống**. Trang chi tiết có nút **Copy khoá HĐ** cùng định dạng đó → dán vào Excel ra
+**đúng 4 cột theo thứ tự file CSV** dùng cho "Tải theo CSV" bên dưới.
 
 **Tải xuống XML + PDF** — module [export.rs](apps/invoice-desktop/src-tauri/src/export.rs):
-`GET /api/query/invoices/export-xml` (bearer token — **KHÔNG** phải `export-html`; endpoint đó 404)
-trả **ZIP 5 file** (chỉ khác file XML), giải nén (`extract_zip_to`), render `invoice.html` → PDF bằng
-**Edge/Chrome headless** (`html_to_pdf`: `--headless=new --no-pdf-header-footer --print-to-pdf`,
-`--user-data-dir` cô lập, `Stdio::null`, coi là thành công khi **file PDF tồn tại & khác rỗng**).
-`find_browser` dò Edge/Chrome ở path Windows chuẩn hoặc env **`INVOICE_BROWSER`**. Command
+`GET /api/query/invoices/export-xml` (bearer token — **KHÔNG** phải `export-html`; endpoint đó 404;
+hàm trong `libs/hddt` vẫn tên `export_html`, **tên gọi sai lịch sử**) trả **ZIP 5 file** (chỉ khác file
+XML), giải nén (`extract_zip_to`), render `invoice.html` → PDF bằng **Edge/Chrome headless**
+(`html_to_pdf`: `--headless=new --no-pdf-header-footer --print-to-pdf`, `--user-data-dir` cô lập,
+`Stdio::null`, coi là thành công khi **file PDF tồn tại & khác rỗng**). `find_browser` dò Edge/Chrome ở
+path Windows chuẩn hoặc env **`INVOICE_BROWSER`**.
+
 `download_invoices(ids, dir)` chạy mỗi hoá đơn: `get_invoice` → `export_xml` → giải nén →
-`html_to_pdf` (trong `spawn_blocking`) → ghi `<khhdon>_<shdon>.xml` + `.pdf` (unique_path), trả
-`ExportInvoiceResult {downloaded, dir, errors}`. UI: nút ở trang chi tiết (1 hoá đơn) + checkbox chọn
-nhiều ở danh sách + **hộp thoại chọn thư mục** (`pickFolder` qua `@tauri-apps/plugin-dialog`).
+`html_to_pdf` (trong `spawn_blocking`) → ghi `<khhdon>_<shdon>.xml` + `.pdf`. ⚠️ **Ghi vào thư mục TẠM
+trước** (`temp/invoice-desktop/inv-export/<uuid>/out`) rồi mới gom về `dir`, vì lúc tải chưa biết sẽ
+nén hay không. Quy tắc đóng gói (hàm dùng chung **`package_outputs(files, out_dir, zip_base, zip)`**):
+- **1 hoá đơn** (tính theo số hoá đơn **tải thành công**) → chép **2 file rời** `.xml` + `.pdf`.
+- **≥2 hoá đơn** → nén **1 file `.zip`**, tên **hệ thống tự đặt**: `auto_zip_base` →
+  `HoaDon_<số lượng>_<yyyyMMdd-HHmmss>.zip`.
+Trả `ExportInvoiceResult {downloaded, dir, path, errors}` — `path` = đường dẫn file zip, **`null` khi
+chép rời**. Trùng tên file có sẵn thì `unique_path` thêm ` (n)`, **không bao giờ ghi đè**.
+UI: nút ở trang chi tiết (1 hoá đơn) + checkbox chọn nhiều ở danh sách + **hộp thoại chọn thư mục**
+(`pickFolder` qua `@tauri-apps/plugin-dialog`).
 ⚠️ Máy đích **phải có Edge hoặc Chrome** để render PDF.
+
+**Tải hàng loạt theo file CSV** — `download_invoices_from_csv(csv_bytes, base_name, dir)` +
+[invoice_csv_download.tsx](apps/invoice-desktop/src/components/invoice_csv_download.tsx) (nút "Tải theo
+CSV" ở toolbar trang purchase). Khác `download_invoices` ở chỗ **không tra DB**: CSV đã chứa đủ 4 khoá
+mà `/export-xml` cần nên **tải được cả hoá đơn chưa đồng bộ về máy**.
+- **Header CSV** (map **theo tên, không phân biệt hoa thường**, có strip BOM): bắt buộc `nbmst`,
+  `khhdon`, `shdon`; `khmshdon` **tuỳ chọn** — thiếu cột/ô rỗng thì mặc định **`"1"`** (hoá đơn GTGT).
+  Thiếu cột bắt buộc ⇒ `Err` **trước khi gọi mạng**. `nbmst` giữ **nguyên chuỗi** (có dạng
+  `0106678187-001`) — xem bẫy Excel ở §7.
+- Gom dòng hợp lệ **trước** (để biết `total` cho tiến độ) + **khử trùng** theo bộ 4 khoá; dòng thiếu
+  khoá vào `errors` kèm `line` (1-based, đã tính dòng header).
+- Nghỉ **500ms** giữa 2 hoá đơn (`CSV_THROTTLE`) — `libs/hddt` **không** throttle, CSV vài trăm dòng
+  bắn liên tục dễ bị cổng chặn. Không đáng kể so với ~2-4s render PDF/hoá đơn.
+- Đóng gói dùng chung `package_outputs` nhưng **luật khác**: **hơn 1 FILE ⇒ nén** (nên CSV 1 dòng vẫn
+  ra `.zip` vì có 2 file), tên zip = **tên file CSV** (`base_name`). Xong thì **mở thư mục đích**.
+- **Tiến độ**: emit `invoice-csv://progress` `{done, total, label}` trước mỗi hoá đơn + 1 lần cuối;
+  component tự `listen` trong `useEffect` (không qua `SyncProvider`) → nút hiện "Đang tải 3/12".
+- Kết quả `InvoiceCsvResult {downloaded, path, errors}`; Dialog liệt kê lỗi từng dòng.
 
 **Ghim cột** ([data-table.tsx](apps/invoice-desktop/src/components/data-table.tsx)):
 `enableColumnPinning` + `columnPinning={{ left: ["select","nguoiBan"], right: ["actions"] }}`; helper
@@ -370,12 +407,17 @@ hoá đơn → coi như chưa bật), tắt ⇒ `throw redirect({ to: "/settings
   đừng để trôi lại. Chạy **trong `apps/invoice-desktop`** (xem §8).
 - **Filter đã lên URL** (search params) — KHÔNG còn ở state cục bộ. Nếu thêm route điều hướng tới
   `/lookups/invoice/purchase` phải kèm `search: { page, size }` (xem 6.6) nếu không sẽ lỗi type.
-- **Sidebar Cài đặt không sáng mục nào**:
-  [settings/route.tsx](apps/invoice-desktop/src/routes/_protected/settings/route.tsx) còn
-  `isActive={item.name === "Messages & media"}` — sót từ template shadcn, luôn `false`. Nên đổi sang
-  so pathname như [nav-main.tsx](apps/invoice-desktop/src/components/nav-main.tsx) đang làm.
+- **⚠️ BẪY DỮ LIỆU: Excel cắt số 0 đầu của `nbmst` khi lưu CSV.** MST Việt Nam là **10 chữ số** (hoặc
+  `10 số + "-" + 3 số`), nhưng Excel coi ô toàn số là *number* nên `0106718496` bị lưu thành
+  `106718496`. Cổng GDT gặp MST sai độ dài thì trả **HTTP 500** với `"message": null` — thông báo vô
+  nghĩa, rất dễ tưởng lỗi app. Đã gặp thật: file 12 dòng chỉ chạy được 3 dòng — đúng 3 dòng có MST hợp
+  lệ (`0106678187-001`, `0302262756-003` giữ dạng text nhờ dấu `-`, và `3700720496` vốn không có số 0
+  đầu). **Quyết định: KHÔNG tự đệm số 0 trong code** (chốt với user) — lỗi thuộc về file nguồn. Khi xuất
+  CSV phải để cột MST ở **định dạng Text**, hoặc thêm lại số 0 trước khi nạp. Nếu sau này đổi ý thì
+  chỗ sửa là hàm đọc dòng CSV trong `download_invoices_from_csv`.
 - **Breadcrumb thiếu `/settings/*`**: [nav-header.tsx](apps/invoice-desktop/src/components/nav-header.tsx)
   chưa có nhánh `routeId` cho các trang Cài đặt → rơi về nhãn mặc định "Bảng điều khiển".
+  (Phần **active của sidebar** Cài đặt thì đã sửa xong — xem §2.)
 - `/settings/notifications` mới là placeholder "Tính năng đang phát triển".
 - **Ngày COA cũ dạng ISO**: COA nào lỡ nhập trước khi đổi định dạng (bằng `type=date`) đang lưu ISO
   trong DB — vẫn **hiển thị & khớp export đúng** nhờ chuẩn hoá (`formatVnDate`/`dates_match`); chưa
@@ -423,8 +465,15 @@ Kiểm thử end-to-end (`pnpm tauri dev`):
    Google Sheets, **Tải xuống** (XML+PDF, cần Edge/Chrome), **Filter** (nbmst/khhdon dò chứa, shdon
    khớp, 3 Select khmshdon/tthai/ttxly, **Range Picker** — thử đổi sang khoảng ở tháng xa hẳn, phải
    chọn được); đổi filter/trang rồi **Chi tiết → Back** thấy filter + trang khôi phục từ URL (F5 cũng giữ).
-5. Gạt **tắt** từng module → dữ liệu module đó bị xoá, mục sidebar biến mất, vào thẳng URL bị đẩy về
+5. **Đóng gói khi tải** (6.6): tick **1** hoá đơn → thư mục đích có **2 file rời** `.xml`/`.pdf`;
+   tick **≥2** → **1 file** `HoaDon_<n>_<ngày giờ>.zip`. Chạy lại lần nữa → ra `... (1).zip`, không ghi đè.
+6. **Tải theo CSV** (6.6): nút ở toolbar purchase → chọn CSV `nbmst,khhdon,shdon,khmshdon` → chọn thư
+   mục → nút chạy "Đang tải 1/12 … 12/12" → ra `<tên CSV>.zip` + thư mục tự mở. ⚠️ Cột MST phải đủ
+   10 số (bẫy Excel, §7). Thử 1 dòng sai `shdon` → dòng đó vào Dialog lỗi, các dòng khác vẫn ra file.
+7. Gạt **tắt** từng module → dữ liệu module đó bị xoá, mục sidebar biến mất, vào thẳng URL bị đẩy về
    /settings/features.
+8. **Nav Cài đặt** (§2): ở `/settings/notifications` và `/settings/accessibilitys`, mục **Cài đặt** ở
+   sidebar chính **vẫn sáng**, sidebar con sáng đúng mục đang xem.
 
 Chức năng mạng phải đăng nhập GDT thật nên không tự chạy được. ⚠️ Luôn dùng **mật khẩu đúng** (§0).
 
@@ -448,9 +497,11 @@ Chức năng mạng phải đăng nhập GDT thật nên không tự chạy đư
 
 ## 10. Mang sang máy khác (QUAN TRỌNG)
 
-⚠️ Tại thời điểm cập nhật tài liệu này, **toàn bộ đợt "bật/tắt module + trang Cài đặt" CHƯA COMMIT**
-(`git status` còn ~36 file sửa + 5 file mới: `settings/route.tsx`, `settings/features.tsx`,
-`settings/accessibilitys.tsx`, `ui/switch.tsx`, `ui/radio-group.tsx`). Để máy khác nhận được:
+⚠️ Đợt "bật/tắt module + trang Cài đặt" **đã commit** (`2aca93f`). Nhưng đợt **"tải hoá đơn theo CSV"
+CHƯA COMMIT**: `git status` còn **9 file sửa** (`src-tauri/src/lib.rs`, `lib/api.ts`, `nav-main.tsx`,
+`app-sidebar.tsx`, `settings/route.tsx`, `purchase.tsx`, `purchase_.$id.tsx`, `__root.tsx`,
+`settings/accessibilitys.tsx`) + **1 file mới** `components/invoice_csv_download.tsx`.
+Để máy khác nhận được:
 
 ```bash
 git add -A
