@@ -21,25 +21,22 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { toast } from "sonner";
-import { FolderUpIcon, Trash2Icon, UploadIcon } from "lucide-react";
-import { ApiError, api, type NewCoaInput } from "@/lib/api";
+import { FilePlusIcon, FolderUpIcon, Trash2Icon } from "lucide-react";
+import { ApiError, api, pickFiles } from "@/lib/api";
 import { isVnDate } from "@/lib/date";
 
-const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
-const ALLOWED_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "pdf"];
+/** Khớp `COA_EXTS` phía Rust — chỉ dùng để lọc trong hộp thoại chọn file. */
+const COA_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "pdf"];
 
 type Row = {
-  file: File;
+  path: string;
+  name: string;
   lot_no: string;
   manufacture_date: string | null;
   expiration_date: string | null;
 };
-
-function isAllowed(file: File): boolean {
-  const ext = (file.name.split(".").pop() ?? "").toLowerCase();
-  return ALLOWED_EXTS.includes(ext) && file.size <= MAX_FILE_BYTES;
-}
 
 export type CoaBulkDialogProps = {
   rawMaterialId: number;
@@ -48,37 +45,72 @@ export type CoaBulkDialogProps = {
 const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
   const [open, setOpen] = React.useState(false);
   const [rows, setRows] = React.useState<Row[]>([]);
-  const inputRef = React.useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = React.useState(false);
   const queryClient = useQueryClient();
 
-  // TS không có prop `webkitdirectory` — gắn qua ref để chọn cả thư mục.
-  React.useEffect(() => {
-    if (inputRef.current) {
-      inputRef.current.setAttribute("webkitdirectory", "");
-      inputRef.current.setAttribute("directory", "");
-    }
-  }, [open]);
-
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const all = Array.from(e.target.files ?? []);
-    e.target.value = ""; // cho phép chọn lại cùng thư mục
-    const kept = all.filter(isAllowed);
-    if (kept.length === 0) {
-      toast.warning("Thư mục không có file ảnh/PDF hợp lệ (≤ 20MB).");
+  /**
+   * Đường vào DUY NHẤT cho mọi cách thêm file (kéo-thả / chọn file / chọn thư mục):
+   * Rust quét đệ quy + lọc đuôi/dung lượng, JS chỉ lo cộng dồn và khử trùng theo đường dẫn.
+   */
+  const addPaths = React.useCallback(async (paths: string[]) => {
+    if (!paths.length) return;
+    let found;
+    try {
+      found = await api.scanCoaFiles(paths);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
       return;
     }
-    if (kept.length < all.length) {
-      toast.info(`Đã bỏ qua ${all.length - kept.length} file không hợp lệ.`);
+    if (!found.length) {
+      toast.warning("Không có file ảnh/PDF hợp lệ (≤ 20MB).");
+      return;
     }
-    setRows(
-      kept.map((file) => ({
-        file,
-        lot_no: "",
-        manufacture_date: null,
-        expiration_date: null,
-      })),
-    );
-  };
+    setRows((prev) => {
+      const seen = new Set(prev.map((r) => r.path));
+      const fresh = found.filter((f) => !seen.has(f.path));
+      if (!fresh.length) {
+        toast.info("Các file này đã có trong danh sách.");
+        return prev;
+      }
+      if (fresh.length < found.length) {
+        toast.info(`Đã bỏ qua ${found.length - fresh.length} file trùng.`);
+      }
+      // Cộng dồn: số lô/ngày đã gõ ở các dòng cũ được giữ nguyên.
+      return [
+        ...prev,
+        ...fresh.map((f) => ({
+          path: f.path,
+          name: f.name,
+          lot_no: "",
+          manufacture_date: null,
+          expiration_date: null,
+        })),
+      ];
+    });
+  }, []);
+
+  /**
+   * Kéo-thả: `dragDropEnabled` mặc định BẬT ở Tauri v2 nên webview KHÔNG nhận được sự kiện
+   * `drop` HTML5 / đối tượng `File` — phải nghe sự kiện của Tauri (trả đường dẫn tuyệt đối).
+   * Sự kiện ở phạm vi cả cửa sổ ⇒ chỉ đăng ký khi dialog đang mở.
+   */
+  React.useEffect(() => {
+    if (!open) return;
+    const p = getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type === "enter" || e.payload.type === "over") {
+        setDragging(true);
+      } else if (e.payload.type === "drop") {
+        setDragging(false);
+        addPaths(e.payload.paths);
+      } else {
+        setDragging(false);
+      }
+    });
+    return () => {
+      p.then((un) => un());
+      setDragging(false);
+    };
+  }, [open, addPaths]);
 
   const update = (i: number, patch: Partial<Row>) =>
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -86,23 +118,29 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
   const removeRow = (i: number) =>
     setRows((prev) => prev.filter((_, idx) => idx !== i));
 
-  // Mở file (chưa lưu) bằng app ngoài để xem trước: ghi bytes ra file tạm rồi mở.
-  const openFile = async (file: File) => {
+  // Chỉ có nút chọn FILE — thư mục cố ý chỉ nạp được bằng kéo-thả.
+  const addFiles = async () => addPaths(await pickFiles("COA", COA_EXTS));
+
+  // Xem trước file CHƯA lưu: mở thẳng từ đường dẫn gốc bằng app mặc định của OS.
+  const openFile = async (path: string) => {
     try {
-      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-      await api.openBytesExternal(file.name, bytes);
+      await api.openPathExternal(path);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : String(e));
     }
   };
 
-  const reset = () => {
-    setRows([]);
-    if (inputRef.current) inputRef.current.value = "";
-  };
-
   const mutation = useMutation({
-    mutationFn: api.createCoasBulk,
+    mutationFn: () =>
+      api.createCoasBulkFromPaths(
+        rawMaterialId,
+        rows.map((r) => ({
+          path: r.path,
+          lot_no: r.lot_no.trim(),
+          manufacture_date: r.manufacture_date || null,
+          expiration_date: r.expiration_date || null,
+        })),
+      ),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["coas", rawMaterialId] });
       toast.success(`Đã thêm ${res.created} COA`);
@@ -113,7 +151,7 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
         );
       }
       setOpen(false);
-      reset();
+      setRows([]);
     },
     onError: (e) => {
       toast.error(e instanceof ApiError ? e.message : String(e));
@@ -129,60 +167,48 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
   const canSubmit =
     rows.length > 0 && missingLot === 0 && badDate === 0 && !mutation.isPending;
 
-  const submit = async () => {
-    const payloads: NewCoaInput[] = [];
-    for (const r of rows) {
-      const bytes = Array.from(new Uint8Array(await r.file.arrayBuffer()));
-      payloads.push({
-        raw_material_id: rawMaterialId,
-        lot_no: r.lot_no.trim(),
-        manufacture_date: r.manufacture_date || null,
-        expiration_date: r.expiration_date || null,
-        file_name: r.file.name,
-        file_bytes: bytes,
-      });
-    }
-    mutation.mutate(payloads);
-  };
-
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
-        if (!o) reset();
+        if (!o) setRows([]);
       }}
     >
       <DialogTrigger
         render={
           <Button variant="outline">
             <FolderUpIcon />
-            <span className="hidden sm:inline">Nhập thư mục COA</span>
+            <span className="hidden sm:inline">Nhập COA</span>
           </Button>
         }
       />
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Nhập thư mục COA</DialogTitle>
+          <DialogTitle>Nhập COA</DialogTitle>
           <DialogDescription>
-            Chọn thư mục chứa các file COA (ảnh/PDF), nhập số lô và ngày cho từng
-            file rồi lưu tất cả.
+            Kéo file/thư mục vào đây hoặc bấm nút để chọn — gom được từ nhiều thư
+            mục khác nhau. Nhập số lô và ngày cho từng file rồi lưu tất cả.
           </DialogDescription>
         </DialogHeader>
 
-        <input ref={inputRef} type="file" hidden multiple onChange={onPick} />
-
         {rows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 rounded-md border border-dashed py-10">
-            <p className="text-sm text-muted-foreground">
-              Chưa chọn thư mục nào.
-            </p>
-            <Button
-              variant="outline"
-              onClick={() => inputRef.current?.click()}
-            >
-              <UploadIcon />
-              Chọn thư mục
+          <div
+            className={`flex flex-col items-center justify-center gap-3 rounded-md border border-dashed py-10 transition-colors ${
+              dragging ? "border-primary bg-primary/5" : ""
+            }`}
+          >
+            <div className="space-y-1 text-center">
+              <p className="text-sm text-muted-foreground">
+                Kéo file hoặc thư mục vào đây
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Cả thư mục thì phải kéo-thả; nút bên dưới chỉ chọn file.
+              </p>
+            </div>
+            <Button variant="outline" onClick={addFiles}>
+              <FilePlusIcon />
+              Chọn file
             </Button>
           </div>
         ) : (
@@ -203,17 +229,17 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
                   </span>
                 )}
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => inputRef.current?.click()}
-              >
-                <UploadIcon />
-                Chọn thư mục khác
+              <Button variant="outline" size="sm" onClick={addFiles}>
+                <FilePlusIcon />
+                Thêm file
               </Button>
             </div>
 
-            <div className="max-h-[55vh] overflow-auto rounded-md border">
+            <div
+              className={`max-h-[55vh] overflow-auto rounded-md border transition-colors ${
+                dragging ? "border-primary bg-primary/5" : ""
+              }`}
+            >
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -226,14 +252,14 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
                 </TableHeader>
                 <TableBody>
                   {rows.map((r, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="max-w-[220px]" title={r.file.name}>
+                    <TableRow key={r.path}>
+                      <TableCell className="max-w-[220px]" title={r.path}>
                         <button
                           type="button"
                           className="block max-w-full truncate text-left text-primary underline-offset-2 hover:underline"
-                          onClick={() => openFile(r.file)}
+                          onClick={() => openFile(r.path)}
                         >
-                          {r.file.name}
+                          {r.name}
                         </button>
                       </TableCell>
                       <TableCell>
@@ -294,7 +320,7 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
               </Button>
             }
           />
-          <Button disabled={!canSubmit} onClick={submit}>
+          <Button disabled={!canSubmit} onClick={() => mutation.mutate()}>
             {mutation.isPending && <Spinner />}
             Lưu tất cả{rows.length ? ` (${rows.length})` : ""}
           </Button>

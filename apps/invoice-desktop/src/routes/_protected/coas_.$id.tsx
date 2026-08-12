@@ -22,13 +22,12 @@ import {
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ColumnDef, RowSelectionState } from "@tanstack/react-table";
-import { DownloadIcon, EllipsisIcon, FileIcon } from "lucide-react";
+import { DownloadIcon, EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
 import RawMaterialDialog from "@/components/raw_material_dialog";
-import CoaDialog from "@/components/coa_dialog";
 import CoaBulkDialog from "@/components/coa_bulk_dialog";
 import CoaViewerSheet from "@/components/coa_viewer_sheet";
-import { api, type Coa } from "@/lib/api";
+import { api, pickFolder, type Coa } from "@/lib/api";
 import { formatVnDate } from "@/lib/date";
 
 export const Route = createFileRoute("/_protected/coas_/$id")({
@@ -84,9 +83,20 @@ function makeCoaColumns(
     {
       id: "lot_no",
       header: () => <div>Số lô</div>,
-      cell: ({ row }) => (
-        <p className="line-clamp-2 text-wrap">{row.original.lot_no}</p>
-      ),
+      // Có file -> số lô là liên kết mở luôn file (thay cho cột "File" cũ).
+      cell: ({ row }) =>
+        row.original.path ? (
+          <button
+            type="button"
+            title={row.original.path}
+            className="line-clamp-2 text-wrap text-left text-primary underline-offset-2 hover:underline"
+            onClick={() => onView(row.original)}
+          >
+            {row.original.lot_no}
+          </button>
+        ) : (
+          <p className="line-clamp-2 text-wrap">{row.original.lot_no}</p>
+        ),
     },
     {
       id: "manufacture_date",
@@ -107,23 +117,6 @@ function makeCoaColumns(
       ),
     },
     {
-      id: "file",
-      header: () => <div>File</div>,
-      cell: ({ row }) =>
-        row.original.path ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onView(row.original)}
-          >
-            <FileIcon />
-            Xem
-          </Button>
-        ) : (
-          <span className="text-muted-foreground">-</span>
-        ),
-    },
-    {
       id: "action",
       header: () => <div></div>,
       cell: ({ row }) => (
@@ -140,7 +133,7 @@ function makeCoaColumns(
               <DropdownMenuLabel>Hành động</DropdownMenuLabel>
               {row.original.path && (
                 <DropdownMenuItem onClick={() => onView(row.original)}>
-                  Mở file
+                  Xem file
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem
@@ -186,12 +179,14 @@ function RouteComponent() {
 
   const downloadSelected = async () => {
     if (!selectedIds.length) return;
+    const dir = await pickFolder();
+    if (!dir) return;
     try {
-      await api.downloadCoas(selectedIds, data.code);
+      const path = await api.downloadCoas(selectedIds, data.code, dir);
       toast.success(
         selectedIds.length === 1
-          ? "Đã tải COA về Downloads"
-          : `Đã tải ${selectedIds.length} COA (.zip) về Downloads`,
+          ? `Đã tải COA → ${path}`
+          : `Đã tải ${selectedIds.length} COA (.zip) → ${path}`,
       );
       setRowSelection({});
     } catch (e) {
@@ -255,7 +250,6 @@ function RouteComponent() {
                 </span>
               </Button>
               <CoaBulkDialog rawMaterialId={data.id} />
-              <CoaDialog rawMaterialId={data.id} />
             </div>
           </div>
           <FieldDescription>Danh sách COA của nguyên liệu</FieldDescription>

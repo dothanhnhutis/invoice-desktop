@@ -12,6 +12,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Link, useRouterState } from "@tanstack/react-router";
 
@@ -47,16 +48,18 @@ function hasActive(
 function Tree({
   item,
   pathname,
+  onNavigate,
 }: {
   item: NavLinkType | NavLinkGroup;
   pathname: string;
+  onNavigate: () => void;
 }) {
   if (!("items" in item)) {
     return (
       <SidebarMenuButton
         isActive={isLeafActive(item.match ?? item.url, pathname)}
         className="data-[active=true]:bg-transparent"
-        render={<Link to={item.url} />}
+        render={<Link to={item.url} onClick={onNavigate} />}
       >
         {item.icon && <item.icon />}
         {item.title}
@@ -78,7 +81,12 @@ function Tree({
       <CollapsibleContent>
         <SidebarMenuSub className="mr-0 pr-0">
           {item.items.map((subItem, index) => (
-            <Tree key={index} item={subItem} pathname={pathname} />
+            <Tree
+              key={index}
+              item={subItem}
+              pathname={pathname}
+              onNavigate={onNavigate}
+            />
           ))}
         </SidebarMenuSub>
       </CollapsibleContent>
@@ -88,12 +96,23 @@ function Tree({
 
 export function NavMain({ items }: { items: (NavLinkType | NavLinkGroup)[] }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { isMobile, setOpenMobile } = useSidebar();
+  // Mobile: sidebar là Sheet phủ kín màn hình -> bấm link xong phải tự đóng,
+  // không thì trang vừa mở bị che, trông như bấm không ăn.
+  const closeOnMobile = () => {
+    if (isMobile) setOpenMobile(false);
+  };
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Platform</SidebarGroupLabel>
       <SidebarMenu>
         {items.map((item) => (
-          <Tree key={item.title} item={item} pathname={pathname} />
+          <Tree
+            key={item.title}
+            item={item}
+            pathname={pathname}
+            onNavigate={closeOnMobile}
+          />
         ))}
       </SidebarMenu>
     </SidebarGroup>

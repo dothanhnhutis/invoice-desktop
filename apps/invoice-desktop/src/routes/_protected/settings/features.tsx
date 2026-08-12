@@ -28,6 +28,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Spinner } from "@/components/ui/spinner";
+import CoaBackup from "@/components/coa_backup";
 import {
   api,
   CREDENTIAL_USERNAME_KEY,
@@ -142,6 +143,21 @@ function RouteComponent() {
               }
             />
           </Field>
+
+          {/* Hàng rào cho công tắc tắt ở trên (xoá vĩnh viễn) + cách mang dữ liệu sang máy khác. */}
+          {rmEnabled && (
+            <Field>
+              <FieldContent>
+                <FieldLabel>Sao lưu & phục hồi</FieldLabel>
+                <FieldDescription>
+                  Xuất toàn bộ nguyên liệu, COA và file đính kèm ra 1 file .zip
+                  để mang sang máy khác. Phục hồi chỉ gộp thêm, không xoá dữ
+                  liệu đang có.
+                </FieldDescription>
+              </FieldContent>
+              <CoaBackup />
+            </Field>
+          )}
         </FieldGroup>
       </FieldSet>
 

@@ -63,10 +63,10 @@ Workspace members (`Cargo.toml`, resolver 3):
   liệu**: `RawMaterial`, `Coa`, `NewRawMaterial`, `NewCoa`, `RawMaterialFilter`, `Paged<T>`.
 - **`libs/store`** — SQLite (rusqlite bundled): `Db` open/upsert/query/sync_state/settings/count/
   delete_invoices_before/clear_all; **+ raw_materials/coas**: insert/update/soft_delete/get/list/count,
-  `get_raw_material_by_code`, `insert_raw_materials_bulk`, `insert_coa`/`get_coa`/`list_coas`/
+  `get_raw_material_by_code`, `insert_coa`/`get_coa`/`list_coas`/
   `soft_delete_coa`/`set_coa_path`; **+ xoá theo module** (xem §6.7): `clear_invoices` (xoá hoá đơn +
   reset sync_state nhưng **GIỮ settings**) và `delete_all_raw_materials_and_coas` (xoá **cứng**
-  raw_materials+coas, reset `sqlite_sequence`). (20 unit test.)
+  raw_materials+coas, reset `sqlite_sequence`). (19 unit test.)
 - **`apps/captcha`** — bin công cụ dev: `label_tool`, `solver`, `login` (mỏng, gọi vào lib).
 - **`apps/invoice-desktop/src-tauri`** — app Tauri (edition 2021). `AppState{client, solver,
   token: Mutex<Option<String>>, db, wake: Notify, auth_blocked: AtomicBool, syncing: AtomicBool}`
@@ -172,11 +172,12 @@ Plugin thêm: `tauri_plugin_dialog` (hộp thoại chọn thư mục lưu — c�
 `capabilities/default.json`).
 
 Nguyên liệu: `get_raw_material_by_id`, `list_raw_materials(filter)`, `create_raw_material`,
-`update_raw_material`, `import_raw_materials(csv_bytes)`.
+`update_raw_material`.
 
-COA: `list_coas`, `create_coa`, `create_coas_bulk`, `read_coa_file`, `open_coa_file`,
-`open_bytes_external(file_name, file_bytes)` (ghi file tạm + mở app ngoài — xem COA CHƯA lưu),
-`delete_coa`, `download_coas(ids, base_name)`, `download_coas_from_csv(csv_bytes, base_name)`.
+COA: `list_coas`, `scan_coa_files(paths)` (quét file/thư mục → danh sách file COA hợp lệ),
+`create_coas_bulk_from_paths(raw_material_id, items)`, `read_coa_file`, `open_coa_file`,
+`open_path_external(path)` (mở app ngoài theo đường dẫn tuyệt đối — xem COA CHƯA lưu),
+`delete_coa`, `download_coas(ids, base_name, dir)`, `download_coas_from_csv(csv_bytes, base_name, dir)`.
 
 Cờ tính năng: `get_feature_raw_materials`, `set_feature_raw_materials(enabled)` (tắt ⇒ **xoá dữ liệu**
 — xem §6.7).
@@ -226,13 +227,26 @@ Quản lý nguyên liệu thô + phiếu kiểm nghiệm (COA — Certificate of
   `set_floor` parse `%Y-%m-%d`); chỉ **biên form** đổi qua lại dd/mm/yyyy↔ISO.
   ⚠️ **FLOOR giờ chọn bằng Calendar** ở trang Cài đặt tính năng (`FloorDatePicker`, hiển thị
   `dd/MM/yyyy`, submit `format(date,"yyyy-MM-dd")`) — không còn ô text ở login-dialog/purchase.
-- **Thêm COA**: từng file ([coa_dialog.tsx](apps/invoice-desktop/src/components/coa_dialog.tsx)) hoặc
-  **cả thư mục** ([coa_bulk_dialog.tsx](apps/invoice-desktop/src/components/coa_bulk_dialog.tsx) dùng
-  `<input webkitdirectory>` → nhập số lô/ngày từng file → `create_coas_bulk`).
-- **Import nguyên liệu (CSV)** `import_raw_materials`
-  ([raw_material_import.tsx](apps/invoice-desktop/src/components/raw_material_import.tsx)): header
-  `code,coa_name|name,producer,country_of_origin`; validate `code`=`ICHRM-####`, **bỏ qua dòng trùng**
-  (báo cáo), 1 transaction.
+- **Thêm COA**: 1 dialog duy nhất
+  ([coa_bulk_dialog.tsx](apps/invoice-desktop/src/components/coa_bulk_dialog.tsx)) với **2 đường vào** —
+  kéo-thả file/thư mục, và nút **Chọn file** (nhiều file). ⚠️ **Cả thư mục CHỈ nạp được bằng kéo-thả**
+  — chủ ý (`pickFolders` đã gỡ), đừng thêm lại nút chọn thư mục. Mọi lần thêm đều **cộng dồn** vào
+  bảng (khử trùng theo đường dẫn) nên gom được COA nằm rải ở nhiều thư mục mà không mất số lô/ngày
+  đang gõ dở. Tất cả đi qua `addPaths` → `scan_coa_files` (Rust duyệt **đệ
+  quy**, lọc `COA_EXTS` + ≤ 20MB, trần 1000 file) → lưu bằng `create_coas_bulk_from_paths`.
+  ⚠️ **BẪY:** `dragDropEnabled` mặc định **BẬT** ở Tauri v2 ⇒ webview **không** nhận được sự kiện
+  `drop` HTML5 hay đối tượng `File` — Tauri nuốt drop của OS và bắn `onDragDropEvent` kèm **đường dẫn
+  tuyệt đối**. Vì vậy dialog chạy **hoàn toàn bằng đường dẫn** (Rust tự đọc bytes, không đẩy
+  `number[]` qua IPC). Đừng quay lại `File`/`webkitdirectory` — kéo-thả sẽ chết. Listener ở phạm vi cả
+  cửa sổ nên chỉ đăng ký khi dialog mở.
+  ⚠️ **ĐÃ GỠ**: dialog "Thêm COA" từng file (`coa_dialog.tsx` + lệnh `create_coa`) vì bản này phủ trọn;
+  `create_coas_bulk` (bytes qua IPC) và `open_bytes_external` (ghi file tạm để xem trước) — thay bằng
+  `create_coas_bulk_from_paths` và `open_path_external`. `write_and_insert_coa` + `CreateCoaInput`
+  **vẫn giữ** (nội bộ Rust, dùng chung với `restore_coas`).
+- ⚠️ **ĐÃ GỠ "Nhập CSV" nguyên liệu** (`import_raw_materials` + `raw_material_import.tsx` +
+  `is_valid_code` + `Db::insert_raw_materials_bulk`) — chức năng **Sao lưu / Phục hồi** thay thế được và
+  mạnh hơn (mang cả COA + file). Đừng dựng lại; ràng buộc mã `ICHRM-####` giờ do form Zod ở
+  `raw_material_dialog.tsx` + index `ux_raw_materials_code` lo.
 - **Export COA (CSV)** `download_coas_from_csv`
   ([raw_material_export.tsx](apps/invoice-desktop/src/components/raw_material_export.tsx)): header
   `code,lot_no[,manufacture_date][,expiration_date]`; khớp `code`+`lot_no`, cột ngày **có mặt phải
@@ -445,8 +459,8 @@ pnpm exec tsc --noEmit
 # Backend
 cargo build --workspace
 cargo check -p invoice-desktop         # nhanh, dùng khi chỉ sửa Rust của app
-cargo test -p hddt -p store            # hddt 9, store 20 (KHÔNG cần mạng)
-cargo test -p invoice-desktop          # 7 test: is_valid_code, parse_flex_date, dates_match, sync window
+cargo test -p hddt -p store            # hddt 9, store 19 (KHÔNG cần mạng)
+cargo test -p invoice-desktop          # 7 test: parse_flex_date, dates_match, coa_key, sync window
 
 # Sinh lại route khi thêm/sửa file trong src/routes (nếu dev server không chạy)
 pnpm dlx @tanstack/router-cli generate

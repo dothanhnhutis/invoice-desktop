@@ -733,152 +733,14 @@ fn update_raw_material(
         .ok_or_else(|| "không tìm thấy nguyên liệu sau cập nhật".to_string())
 }
 
-/// Một dòng CSV không hợp lệ (không nhập được) kèm lý do.
-#[derive(serde::Serialize)]
-struct InvalidRow {
-    /// Số dòng trong file (1-based, tính cả dòng header).
-    line: usize,
-    reason: String,
-}
-
-/// Kết quả nhập nguyên liệu từ CSV.
-#[derive(serde::Serialize)]
-struct ImportResult {
-    /// Số nguyên liệu tạo mới thành công.
-    created: usize,
-    /// Các mã bị bỏ qua do trùng (đã có trong DB hoặc trùng trong chính file).
-    duplicates: Vec<String>,
-    /// Các dòng không hợp lệ (sai mã / thiếu tên / hỏng), không được nhập.
-    invalid: Vec<InvalidRow>,
-}
-
-/// `code` đúng chuẩn `ICHRM-####` (tiền tố + đúng 4 chữ số, hết chuỗi).
-fn is_valid_code(code: &str) -> bool {
-    match code.strip_prefix("ICHRM-") {
-        Some(rest) => rest.len() == 4 && rest.bytes().all(|b| b.is_ascii_digit()),
-        None => false,
-    }
-}
-
-/// Nhập nguyên liệu hàng loạt từ nội dung file CSV (bytes).
-///
-/// Header nhận diện theo tên (không theo vị trí): `code`, `coa_name`/`name`, `producer`,
-/// `country_of_origin`. Dòng sai mã (không `ICHRM-####`) hoặc thiếu tên -> liệt kê ở `invalid`,
-/// không nhập. Mã trùng (DB hoặc trong chính file) -> bỏ qua, liệt kê ở `duplicates`.
-#[tauri::command]
-fn import_raw_materials(
-    state: State<'_, AppState>,
-    csv_bytes: Vec<u8>,
-) -> Result<ImportResult, String> {
-    // Bỏ BOM UTF-8 nếu có để header đầu không bị dính "\u{feff}".
-    let bytes: &[u8] = csv_bytes
-        .strip_prefix(&[0xEF, 0xBB, 0xBF])
-        .unwrap_or(&csv_bytes);
-
-    let mut rdr = csv::ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(bytes);
-
-    // Map tên cột -> chỉ số (lowercase). Chấp nhận `coa_name` hoặc `name` cho tên nguyên liệu.
-    let headers = rdr
-        .headers()
-        .map_err(|e| format!("Không đọc được header CSV: {e}"))?;
-    let mut idx_code: Option<usize> = None;
-    let mut idx_name: Option<usize> = None;
-    let mut idx_producer: Option<usize> = None;
-    let mut idx_country: Option<usize> = None;
-    for (i, h) in headers.iter().enumerate() {
-        match h.trim().to_lowercase().as_str() {
-            "code" => idx_code = Some(i),
-            "coa_name" | "name" => idx_name = Some(i),
-            "producer" => idx_producer = Some(i),
-            "country_of_origin" => idx_country = Some(i),
-            _ => {}
-        }
-    }
-    let mut missing: Vec<&str> = Vec::new();
-    if idx_code.is_none() {
-        missing.push("code");
-    }
-    if idx_name.is_none() {
-        missing.push("coa_name");
-    }
-    if !missing.is_empty() {
-        return Err(format!("File CSV thiếu cột: {}", missing.join(", ")));
-    }
-    let idx_code = idx_code.unwrap();
-    let idx_name = idx_name.unwrap();
-
-    let mut valid: Vec<NewRawMaterial> = Vec::new();
-    let mut invalid: Vec<InvalidRow> = Vec::new();
-    let get = |rec: &csv::StringRecord, i: Option<usize>| -> String {
-        i.and_then(|i| rec.get(i)).unwrap_or("").trim().to_string()
-    };
-
-    for (i, rec) in rdr.records().enumerate() {
-        let line = i + 2; // +1 header, +1 để về 1-based.
-        let rec = match rec {
-            Ok(r) => r,
-            Err(_) => {
-                invalid.push(InvalidRow {
-                    line,
-                    reason: "Dòng CSV không hợp lệ".into(),
-                });
-                continue;
-            }
-        };
-        let code = get(&rec, Some(idx_code));
-        let name = get(&rec, Some(idx_name));
-        if !is_valid_code(&code) {
-            invalid.push(InvalidRow {
-                line,
-                reason: "Mã không đúng ICHRM-####".into(),
-            });
-            continue;
-        }
-        if name.is_empty() {
-            invalid.push(InvalidRow {
-                line,
-                reason: "Thiếu tên nguyên liệu".into(),
-            });
-            continue;
-        }
-        let producer = get(&rec, idx_producer);
-        let country = get(&rec, idx_country);
-        valid.push(NewRawMaterial {
-            code,
-            name,
-            producer,
-            country_of_origin: if country.is_empty() {
-                None
-            } else {
-                Some(country)
-            },
-        });
-    }
-
-    let (created, duplicates) = state
-        .db
-        .insert_raw_materials_bulk(&valid)
-        .map_err(|e| e.to_string())?;
-
-    Ok(ImportResult {
-        created,
-        duplicates,
-        invalid,
-    })
-}
-
 /// Danh sách COA của một nguyên liệu.
 #[tauri::command]
 fn list_coas(state: State<'_, AppState>, raw_material_id: i64) -> Result<Vec<Coa>, String> {
     state.db.list_coas(raw_material_id).map_err(|e| e.to_string())
 }
 
-/// Dữ liệu tạo COA kèm file (ảnh/PDF) truyền từ frontend.
-#[derive(serde::Deserialize)]
+/// Dữ liệu tạo 1 COA kèm bytes file (ảnh/PDF). Nội bộ Rust: dựng từ đường dẫn
+/// (`create_coas_bulk_from_paths`) hoặc từ entry trong zip sao lưu (`restore_coas`).
 struct CreateCoaInput {
     raw_material_id: i64,
     lot_no: String,
@@ -889,8 +751,8 @@ struct CreateCoaInput {
 }
 
 /// Ghi 1 file COA vào `app_data_dir/coa/<uuidv7>.<ext>` (cạnh SQLite) rồi chèn bản ghi
-/// (đường dẫn tương đối để DB portable). Trả bản ghi COA vừa tạo. Dùng chung cho tạo 1 file
-/// và tạo hàng loạt.
+/// (đường dẫn tương đối để DB portable). Trả bản ghi COA vừa tạo. Dùng chung cho tạo hàng loạt
+/// (`create_coas_bulk`) và phục hồi sao lưu (`restore_coas`).
 fn write_and_insert_coa(
     app: &tauri::AppHandle,
     db: &store::Db,
@@ -928,15 +790,339 @@ fn write_and_insert_coa(
         .ok_or_else(|| "không tìm thấy COA vừa tạo".to_string())
 }
 
-/// Tạo COA: ghi file vào `app_data_dir/coa/<uuidv7>.<ext>` (cạnh SQLite),
-/// chèn bản ghi với đường dẫn tương đối, trả bản ghi COA.
+// ---------------------------------------------------------------------------
+// Sao lưu / phục hồi Nguyên liệu & COA (mang dữ liệu sang máy khác)
+// ---------------------------------------------------------------------------
+
+/// Phiên bản định dạng file sao lưu. Tăng khi đổi cấu trúc `manifest.json`.
+const BACKUP_VERSION: u32 = 1;
+
+/// 1 COA trong `manifest.json`. `file` = tên entry trong zip (`files/<uuid>.<ext>`),
+/// None khi COA chưa từng đính file.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BackupCoa {
+    lot_no: String,
+    manufacture_date: Option<String>,
+    expiration_date: Option<String>,
+    file: Option<String>,
+}
+
+/// 1 nguyên liệu + COA của nó. COA lồng trong nguyên liệu nên phục hồi KHÔNG cần map id cũ→mới.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BackupRawMaterial {
+    code: String,
+    name: String,
+    producer: String,
+    country_of_origin: Option<String>,
+    coas: Vec<BackupCoa>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BackupManifest {
+    version: u32,
+    created_at: String,
+    raw_materials: Vec<BackupRawMaterial>,
+}
+
+#[derive(serde::Serialize)]
+struct BackupResult {
+    raw_materials: usize,
+    coas: usize,
+    /// COA có `path` nhưng file không còn trên đĩa (bản ghi vẫn được sao lưu, chỉ thiếu file).
+    missing_files: Vec<String>,
+    path: String,
+}
+
+#[derive(serde::Serialize)]
+struct RestoreError {
+    code: String,
+    lot_no: String,
+    reason: String,
+}
+
+#[derive(serde::Serialize)]
+struct RestoreResult {
+    materials_created: usize,
+    materials_matched: usize,
+    coas_added: usize,
+    coas_skipped: usize,
+    errors: Vec<RestoreError>,
+}
+
+/// Khóa khử trùng 1 COA trong phạm vi 1 nguyên liệu: (số lô, ngày SX, HSD).
+/// Số lô bỏ qua hoa/thường + khoảng trắng; ngày chuẩn hoá qua `parse_flex_date` nên
+/// `01/2026` và `2026-01` coi là MỘT (dữ liệu COA cũ còn lưu dạng ISO).
+type CoaKey = (String, Option<(i32, u32, Option<u32>)>, Option<(i32, u32, Option<u32>)>);
+
+fn coa_key(lot_no: &str, mdate: &Option<String>, edate: &Option<String>) -> CoaKey {
+    let norm = |o: &Option<String>| o.as_deref().and_then(parse_flex_date);
+    (
+        lot_no.trim().to_lowercase(),
+        norm(mdate),
+        norm(edate),
+    )
+}
+
+/// Sao lưu toàn bộ Nguyên liệu & COA ra 1 file `.zip` trong thư mục `dir`:
+/// `manifest.json` (nguyên liệu + COA lồng nhau) và `files/<uuid>.<ext>` (bản sao file COA).
+/// ⚠️ Duyệt theo nguyên liệu đang hoạt động nên COA "mồ côi" (nguyên liệu cha đã xoá mềm) bị bỏ qua —
+/// đúng ý, vì chúng cũng không hiện ở UI.
 #[tauri::command]
-fn create_coa(
+fn backup_coas(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    payload: CreateCoaInput,
-) -> Result<Coa, String> {
-    write_and_insert_coa(&app, &state.db, &payload)
+    dir: String,
+) -> Result<BackupResult, String> {
+    use std::io::Write;
+
+    let out_dir = std::path::PathBuf::from(&dir);
+    if !out_dir.is_dir() {
+        return Err("Thư mục lưu không hợp lệ".into());
+    }
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    let materials = state
+        .db
+        .list_raw_materials(&RawMaterialFilter::default()) // limit None -> lấy hết
+        .map_err(|e| e.to_string())?;
+
+    let mut manifest = BackupManifest {
+        version: BACKUP_VERSION,
+        created_at: chrono::Local::now().to_rfc3339(),
+        raw_materials: Vec::with_capacity(materials.len()),
+    };
+    // (tên entry trong zip, đường dẫn tuyệt đối trên đĩa)
+    let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut missing_files: Vec<String> = Vec::new();
+    let mut coa_count = 0usize;
+
+    for m in materials {
+        let coas = state.db.list_coas(m.id).map_err(|e| e.to_string())?;
+        let mut items = Vec::with_capacity(coas.len());
+        for c in coas {
+            coa_count += 1;
+            // `path` có thể lỗi thời (delete_coa xoá file trước khi xoá mềm) -> luôn kiểm tồn tại.
+            let entry = match c.path.as_deref() {
+                Some(rel) => {
+                    let abs = base.join(rel);
+                    if abs.exists() {
+                        // Tên gốc là uuidv7 -> chắc chắn không trùng giữa các COA.
+                        let name = std::path::Path::new(rel)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(rel);
+                        let in_zip = format!("files/{name}");
+                        files.push((in_zip.clone(), abs));
+                        Some(in_zip)
+                    } else {
+                        missing_files.push(format!("{} / {}", m.code, c.lot_no));
+                        None
+                    }
+                }
+                None => None,
+            };
+            items.push(BackupCoa {
+                lot_no: c.lot_no,
+                manufacture_date: c.manufacture_date,
+                expiration_date: c.expiration_date,
+                file: entry,
+            });
+        }
+        manifest.raw_materials.push(BackupRawMaterial {
+            code: m.code,
+            name: m.name,
+            producer: m.producer,
+            country_of_origin: m.country_of_origin,
+            coas: items,
+        });
+    }
+
+    let zip_base = format!(
+        "COA_backup_{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    );
+    let zip_path = unique_path(&out_dir, &zip_base, ".zip");
+    let file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+    let mut zw = zip::ZipWriter::new(file);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    let json = serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?;
+    zw.start_file("manifest.json", options)
+        .map_err(|e| e.to_string())?;
+    zw.write_all(&json).map_err(|e| e.to_string())?;
+    for (name, abs) in &files {
+        zw.start_file(name, options).map_err(|e| e.to_string())?;
+        let bytes = std::fs::read(abs).map_err(|e| e.to_string())?;
+        zw.write_all(&bytes).map_err(|e| e.to_string())?;
+    }
+    zw.finish().map_err(|e| e.to_string())?;
+
+    let _ = app.opener().open_path(dir, None::<String>);
+
+    Ok(BackupResult {
+        raw_materials: manifest.raw_materials.len(),
+        coas: coa_count,
+        missing_files,
+        path: zip_path.to_string_lossy().to_string(),
+    })
+}
+
+/// Phục hồi từ file sao lưu: **gộp thêm, không xoá gì**.
+/// Mã nguyên liệu đã có ở máy này ⇒ giữ nguyên thông tin cũ, chỉ thêm COA còn thiếu.
+/// COA trùng (cùng số lô + ngày, xem `coa_key`) ⇒ bỏ qua ⇒ chạy lại nhiều lần vẫn an toàn.
+///
+/// Nhận **đường dẫn** chứ không nhận bytes: cầu IPC mã hoá `Vec<u8>` thành mảng số JSON (~4× dung
+/// lượng, buffer cả 2 phía) nên bản sao lưu lớn sẽ không tải nổi.
+#[tauri::command]
+fn restore_coas(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    zip_path: String,
+) -> Result<RestoreResult, String> {
+    use std::io::Read;
+
+    let bytes = std::fs::read(&zip_path).map_err(|e| format!("Không đọc được file: {e}"))?;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("File không phải ZIP hợp lệ: {e}"))?;
+
+    let manifest: BackupManifest = {
+        let mut entry = archive
+            .by_name("manifest.json")
+            .map_err(|_| "Không đọc được manifest.json — file này không phải bản sao lưu".to_string())?;
+        let mut buf = String::new();
+        entry.read_to_string(&mut buf).map_err(|e| e.to_string())?;
+        serde_json::from_str(&buf).map_err(|e| format!("manifest.json hỏng: {e}"))?
+    };
+    if manifest.version != BACKUP_VERSION {
+        return Err(format!(
+            "Bản sao lưu phiên bản {} không tương thích (app đọc được phiên bản {BACKUP_VERSION})",
+            manifest.version
+        ));
+    }
+
+    let mut res = RestoreResult {
+        materials_created: 0,
+        materials_matched: 0,
+        coas_added: 0,
+        coas_skipped: 0,
+        errors: Vec::new(),
+    };
+
+    for m in &manifest.raw_materials {
+        // Mã đã có -> dùng lại id, KHÔNG đụng tên/NSX/quốc gia của máy này.
+        let rm_id = match state
+            .db
+            .get_raw_material_by_code(&m.code)
+            .map_err(|e| e.to_string())?
+        {
+            Some(rm) => {
+                res.materials_matched += 1;
+                rm.id
+            }
+            None => {
+                let new = NewRawMaterial {
+                    code: m.code.clone(),
+                    name: m.name.clone(),
+                    producer: m.producer.clone(),
+                    country_of_origin: m.country_of_origin.clone(),
+                };
+                match state.db.insert_raw_material(&new) {
+                    Ok(id) => {
+                        res.materials_created += 1;
+                        id
+                    }
+                    Err(e) => {
+                        res.errors.push(RestoreError {
+                            code: m.code.clone(),
+                            lot_no: String::new(),
+                            reason: map_db_err(e),
+                        });
+                        continue;
+                    }
+                }
+            }
+        };
+
+        // Nạp COA hiện có 1 lần để khử trùng.
+        let mut seen: std::collections::HashSet<CoaKey> = state
+            .db
+            .list_coas(rm_id)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .map(|c| coa_key(&c.lot_no, &c.manufacture_date, &c.expiration_date))
+            .collect();
+
+        for c in &m.coas {
+            let key = coa_key(&c.lot_no, &c.manufacture_date, &c.expiration_date);
+            if !seen.insert(key) {
+                res.coas_skipped += 1;
+                continue;
+            }
+            let outcome = match &c.file {
+                // Có file -> lấy bytes trong zip rồi đi đúng đường tạo COA thường ngày
+                // (tự sinh uuid mới, không đè file nào của máy này).
+                Some(name) => read_zip_entry(&mut archive, name).and_then(|bytes| {
+                    write_and_insert_coa(
+                        &app,
+                        &state.db,
+                        &CreateCoaInput {
+                            raw_material_id: rm_id,
+                            lot_no: c.lot_no.clone(),
+                            manufacture_date: c.manufacture_date.clone(),
+                            expiration_date: c.expiration_date.clone(),
+                            file_name: name.clone(),
+                            file_bytes: bytes,
+                        },
+                    )
+                    .map(|_| ())
+                }),
+                // Không có file -> vẫn giữ bản ghi để không mất dữ liệu.
+                None => state
+                    .db
+                    .insert_coa(&NewCoa {
+                        raw_material_id: rm_id,
+                        lot_no: c.lot_no.clone(),
+                        manufacture_date: c.manufacture_date.clone(),
+                        expiration_date: c.expiration_date.clone(),
+                        path: None,
+                    })
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+            };
+            match outcome {
+                Ok(()) => res.coas_added += 1,
+                Err(reason) => res.errors.push(RestoreError {
+                    code: m.code.clone(),
+                    lot_no: c.lot_no.clone(),
+                    reason,
+                }),
+            }
+        }
+    }
+
+    // Vừa nạp dữ liệu thì module phải đang bật, không thì người dùng không thấy gì.
+    let _ = state.db.set_setting("feature_raw_materials", "1");
+
+    Ok(res)
+}
+
+/// Đọc 1 entry trong zip. `enclosed_name` chặn path traversal của archive lạ.
+fn read_zip_entry(
+    archive: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>,
+    name: &str,
+) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    let mut entry = archive
+        .by_name(name)
+        .map_err(|_| format!("thiếu file {name} trong bản sao lưu"))?;
+    if entry.enclosed_name().is_none() {
+        return Err(format!("tên file không hợp lệ: {name}"));
+    }
+    let mut buf = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    Ok(buf)
 }
 
 /// Một file lỗi khi tạo COA hàng loạt (không chặn các file khác).
@@ -953,22 +1139,130 @@ struct CoaBulkResult {
     errors: Vec<CoaBulkError>,
 }
 
-/// Tạo nhiều COA cùng lúc (upload cả thư mục). Best-effort: 1 file lỗi vẫn tiếp tục các file còn lại.
+/// Đuôi file COA chấp nhận được (ảnh + PDF) và trần dung lượng mỗi file.
+const COA_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "pdf"];
+const COA_MAX_BYTES: u64 = 20 * 1024 * 1024;
+/// Trần số file 1 lần quét — thả nhầm thư mục gốc thì báo lỗi thay vì treo UI.
+const COA_SCAN_LIMIT: usize = 1000;
+
+/// 1 file COA ứng viên (chưa lưu) trả về cho bảng nhập liệu.
+#[derive(serde::Serialize)]
+struct CoaFileEntry {
+    path: String,
+    name: String,
+}
+
+/// File có đuôi hợp lệ và không quá `COA_MAX_BYTES`? Lỗi đọc metadata -> loại.
+fn is_coa_file(p: &std::path::Path) -> bool {
+    let ok_ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| COA_EXTS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false);
+    ok_ext && std::fs::metadata(p).map(|m| m.len() <= COA_MAX_BYTES).unwrap_or(false)
+}
+
+/// Duyệt đệ quy 1 thư mục, gom file COA hợp lệ. Nhánh nào đọc lỗi thì bỏ qua (best-effort).
+fn collect_coa_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if out.len() > COA_SCAN_LIMIT {
+            return;
+        }
+        let p = entry.path();
+        if p.is_dir() {
+            collect_coa_files(&p, out);
+        } else if is_coa_file(&p) {
+            out.push(p);
+        }
+    }
+}
+
+/// Quét danh sách đường dẫn (trộn file lẫn thư mục — từ kéo-thả hoặc hộp thoại) thành danh sách
+/// file COA hợp lệ: thư mục duyệt **đệ quy**, lọc đuôi + dung lượng, khử trùng, sắp theo tên.
 #[tauri::command]
-fn create_coas_bulk(
+fn scan_coa_files(paths: Vec<String>) -> Result<Vec<CoaFileEntry>, String> {
+    let mut found: Vec<PathBuf> = Vec::new();
+    for raw in &paths {
+        let p = PathBuf::from(raw);
+        if p.is_dir() {
+            collect_coa_files(&p, &mut found);
+        } else if is_coa_file(&p) {
+            found.push(p);
+        }
+        if found.len() > COA_SCAN_LIMIT {
+            return Err(format!(
+                "Quá nhiều file (> {COA_SCAN_LIMIT}). Hãy chọn thư mục nhỏ hơn."
+            ));
+        }
+    }
+
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut out: Vec<CoaFileEntry> = found
+        .into_iter()
+        .filter(|p| seen.insert(p.clone()))
+        .map(|p| CoaFileEntry {
+            name: p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            path: p.to_string_lossy().to_string(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// 1 dòng trong bảng nhập COA hàng loạt: đường dẫn file gốc + số lô/ngày người dùng gõ.
+#[derive(serde::Deserialize)]
+struct CoaPathInput {
+    path: String,
+    lot_no: String,
+    manufacture_date: Option<String>,
+    expiration_date: Option<String>,
+}
+
+/// Tạo nhiều COA cùng lúc từ ĐƯỜNG DẪN (đọc bytes ở Rust — không đẩy file qua cầu IPC).
+/// Best-effort: 1 file lỗi vẫn tiếp tục các file còn lại.
+#[tauri::command]
+fn create_coas_bulk_from_paths(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    payloads: Vec<CreateCoaInput>,
+    raw_material_id: i64,
+    items: Vec<CoaPathInput>,
 ) -> Result<CoaBulkResult, String> {
     let mut created = 0usize;
     let mut errors: Vec<CoaBulkError> = Vec::new();
-    for p in &payloads {
-        match write_and_insert_coa(&app, &state.db, p) {
+    for it in &items {
+        let src = std::path::Path::new(&it.path);
+        let file_name = src
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| it.path.clone());
+        // File có thể đã bị xoá/đổi tên sau khi thêm vào bảng -> báo đúng file đó rồi đi tiếp.
+        let bytes = match std::fs::read(src) {
+            Ok(b) => b,
+            Err(e) => {
+                errors.push(CoaBulkError {
+                    file_name,
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+        let payload = CreateCoaInput {
+            raw_material_id,
+            lot_no: it.lot_no.clone(),
+            manufacture_date: it.manufacture_date.clone(),
+            expiration_date: it.expiration_date.clone(),
+            file_name: file_name.clone(),
+            file_bytes: bytes,
+        };
+        match write_and_insert_coa(&app, &state.db, &payload) {
             Ok(_) => created += 1,
-            Err(reason) => errors.push(CoaBulkError {
-                file_name: p.file_name.clone(),
-                reason,
-            }),
+            Err(reason) => errors.push(CoaBulkError { file_name, reason }),
         }
     }
     Ok(CoaBulkResult { created, errors })
@@ -998,27 +1292,12 @@ fn open_coa_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Ghi bytes ra file tạm (giữ tên gốc để app ngoài nhận đúng đuôi) rồi mở bằng app mặc định OS.
-/// Dùng để xem trước file COA CHƯA lưu (chọn từ thư mục).
+/// Mở 1 file theo đường dẫn TUYỆT ĐỐI bằng app mặc định OS — xem trước COA **chưa lưu**
+/// (đang nằm ở thư mục gốc của người dùng, chưa chép vào `app_data_dir`).
 #[tauri::command]
-fn open_bytes_external(
-    app: tauri::AppHandle,
-    file_name: String,
-    file_bytes: Vec<u8>,
-) -> Result<(), String> {
-    // Thư mục con uuid riêng mỗi lần mở → không đụng tên / khoá file khi mở nhiều file trùng tên.
-    let dir = app
-        .path()
-        .temp_dir()
-        .map_err(|e| e.to_string())?
-        .join("invoice-desktop")
-        .join("coa-preview")
-        .join(uuid::Uuid::now_v7().to_string());
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let abs = dir.join(sanitize_filename(&file_name)); // giữ tên + đuôi gốc
-    std::fs::write(&abs, &file_bytes).map_err(|e| e.to_string())?;
+fn open_path_external(app: tauri::AppHandle, path: String) -> Result<(), String> {
     app.opener()
-        .open_path(abs.to_string_lossy().to_string(), None::<String>)
+        .open_path(path, None::<String>)
         .map_err(|e| e.to_string())
 }
 
@@ -1110,27 +1389,25 @@ fn coa_to_item(base_dir: &std::path::Path, coa: Coa) -> Option<CoaItem> {
     Some((coa.lot_no, coa.manufacture_date, coa.expiration_date, abs, ext))
 }
 
-/// Copy/zip danh sách COA về Downloads: 1 file → copy thẳng; nhiều → nén 1 `.zip`
-/// (mỗi entry `COA_<số lô>_<ngày SX>.<ext>`, thêm ` (n)` nếu trùng tên). Mở thư mục
-/// Downloads và trả đường dẫn kết quả.
-fn export_items_to_downloads(
+/// Copy/zip danh sách COA vào `out_dir` (người dùng chọn): 1 file → copy thẳng; nhiều → nén 1 `.zip`
+/// (mỗi entry `COA_<số lô>_<ngày SX>.<ext>`, thêm ` (n)` nếu trùng tên). Mở thư mục đích
+/// và trả đường dẫn kết quả.
+fn export_items_to_dir(
     app: &tauri::AppHandle,
     items: &[CoaItem],
     base_name: Option<String>,
+    out_dir: &std::path::Path,
 ) -> Result<String, String> {
     use std::io::Write;
 
-    let dl = app.path().download_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dl).map_err(|e| e.to_string())?;
-
     let result = if items.len() == 1 {
         let (lot, mdate, edate, src, ext) = &items[0];
-        let dest = unique_path(&dl, &coa_stem(lot, mdate, edate), ext);
+        let dest = unique_path(out_dir, &coa_stem(lot, mdate, edate), ext);
         std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
         dest
     } else {
         let zip_base = sanitize_filename(&base_name.unwrap_or_else(|| "COA_export".to_string()));
-        let zip_path = unique_path(&dl, &zip_base, ".zip");
+        let zip_path = unique_path(out_dir, &zip_base, ".zip");
         let file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::SimpleFileOptions::default()
@@ -1153,10 +1430,10 @@ fn export_items_to_downloads(
         zip_path
     };
 
-    // Mở thư mục Downloads cho tiện.
+    // Mở thư mục đích cho tiện.
     let _ = app
         .opener()
-        .open_path(dl.to_string_lossy().to_string(), None::<String>);
+        .open_path(out_dir.to_string_lossy().to_string(), None::<String>);
 
     Ok(result.to_string_lossy().to_string())
 }
@@ -1225,16 +1502,21 @@ fn dates_match(csv: &str, db: &Option<String>) -> bool {
     }
 }
 
-/// Tải các COA đã chọn (theo id) về thư mục Downloads.
+/// Tải các COA đã chọn (theo id) về thư mục `dir` người dùng chọn.
 #[tauri::command]
 fn download_coas(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     ids: Vec<i64>,
     base_name: Option<String>,
+    dir: String,
 ) -> Result<String, String> {
     if ids.is_empty() {
         return Err("Chưa chọn COA nào".to_string());
+    }
+    let out_dir = std::path::PathBuf::from(&dir);
+    if !out_dir.is_dir() {
+        return Err("Thư mục lưu không hợp lệ".into());
     }
     let base_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let mut items: Vec<CoaItem> = Vec::new();
@@ -1250,7 +1532,7 @@ fn download_coas(
     }
     // Tải theo checkbox: giữ tên zip `COA_<mã nguyên liệu>.zip`.
     let base = base_name.unwrap_or_else(|| "export".to_string());
-    export_items_to_downloads(&app, &items, Some(format!("COA_{base}")))
+    export_items_to_dir(&app, &items, Some(format!("COA_{base}")), &out_dir)
 }
 
 /// Một dòng CSV không tải được COA (kèm lý do) khi tải theo danh sách.
@@ -1279,7 +1561,13 @@ fn download_coas_from_csv(
     state: State<'_, AppState>,
     csv_bytes: Vec<u8>,
     base_name: Option<String>,
+    dir: String,
 ) -> Result<ExportResult, String> {
+    // Kiểm thư mục trước, khỏi parse CSV thừa.
+    let out_dir = std::path::PathBuf::from(&dir);
+    if !out_dir.is_dir() {
+        return Err("Thư mục lưu không hợp lệ".into());
+    }
     let bytes: &[u8] = csv_bytes
         .strip_prefix(&[0xEF, 0xBB, 0xBF])
         .unwrap_or(&csv_bytes);
@@ -1410,7 +1698,7 @@ fn download_coas_from_csv(
         });
     }
     let downloaded = items.len();
-    let path = export_items_to_downloads(&app, &items, base_name)?;
+    let path = export_items_to_dir(&app, &items, base_name, &out_dir)?;
     Ok(ExportResult {
         downloaded,
         path: Some(path),
@@ -1569,16 +1857,17 @@ pub fn run() {
             list_raw_materials,
             create_raw_material,
             update_raw_material,
-            import_raw_materials,
             list_coas,
-            create_coa,
-            create_coas_bulk,
+            scan_coa_files,
+            create_coas_bulk_from_paths,
             read_coa_file,
             open_coa_file,
-            open_bytes_external,
+            open_path_external,
             delete_coa,
             download_coas,
             download_coas_from_csv,
+            backup_coas,
+            restore_coas,
             get_floor,
             set_floor,
             get_feature_raw_materials,
@@ -1594,15 +1883,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_valid_code_checks_pattern() {
-        assert!(is_valid_code("ICHRM-0001"));
-        assert!(!is_valid_code("ICHRM-1"));
-        assert!(!is_valid_code("ICH-0001"));
-        assert!(!is_valid_code("ICHRM-00A1"));
-        assert!(!is_valid_code("ICHRM-00012"));
-    }
-
-    #[test]
     fn parse_flex_date_formats() {
         assert_eq!(parse_flex_date("25/11/2025"), Some((2025, 11, Some(25))));
         assert_eq!(parse_flex_date("12/2025"), Some((2025, 12, None)));
@@ -1611,6 +1891,33 @@ mod tests {
         assert_eq!(parse_flex_date(""), None);
         assert_eq!(parse_flex_date("bad"), None);
         assert_eq!(parse_flex_date("13/2025"), None); // tháng > 12
+    }
+
+    #[test]
+    fn coa_key_normalizes_lot_and_dates() {
+        let d = |s: &str| Some(s.to_string());
+        // mm/yyyy và ISO yyyy-mm là MỘT (dữ liệu COA cũ lưu ISO).
+        assert_eq!(
+            coa_key("L1", &d("01/2026"), &None),
+            coa_key("L1", &d("2026-01"), &None)
+        );
+        assert_eq!(
+            coa_key("L1", &d("01/12/2025"), &None),
+            coa_key("L1", &d("2025-12-01"), &None)
+        );
+        // Số lô: bỏ qua hoa/thường + khoảng trắng thừa.
+        assert_eq!(coa_key(" l1 ", &None, &None), coa_key("L1", &None, &None));
+        // Khác tháng / khác HSD -> khác khóa.
+        assert_ne!(
+            coa_key("L1", &d("01/2026"), &None),
+            coa_key("L1", &d("02/2026"), &None)
+        );
+        assert_ne!(
+            coa_key("L1", &d("01/2026"), &None),
+            coa_key("L1", &d("01/2026"), &d("01/2027"))
+        );
+        // Ngày không parse được -> None, không làm nổ khóa.
+        assert_eq!(coa_key("L1", &d("bad"), &None), coa_key("L1", &None, &None));
     }
 
     #[test]

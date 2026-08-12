@@ -13,7 +13,7 @@ import { Spinner } from "./ui/spinner";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { DownloadIcon } from "lucide-react";
-import { ApiError, api, type ExportResult } from "@/lib/api";
+import { ApiError, api, pickFolder, type ExportResult } from "@/lib/api";
 
 /** Nút "Tải COA": chọn file CSV (code, lot_no, [ngày SX], [HSD]) → tải file COA khớp về Downloads. */
 const RawMaterialExport = () => {
@@ -21,11 +21,18 @@ const RawMaterialExport = () => {
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const mutation = useMutation({
-    mutationFn: ({ bytes, baseName }: { bytes: number[]; baseName: string }) =>
-      api.downloadCoasFromCsv(bytes, baseName),
+    mutationFn: ({
+      bytes,
+      baseName,
+      dir,
+    }: {
+      bytes: number[];
+      baseName: string;
+      dir: string;
+    }) => api.downloadCoasFromCsv(bytes, baseName, dir),
     onSuccess: (res) => {
       if (res.downloaded > 0) {
-        toast.success(`Đã tải ${res.downloaded} COA về Downloads`);
+        toast.success(`Đã tải ${res.downloaded} COA → ${res.path}`);
       } else {
         toast.warning("Không có COA nào khớp");
       }
@@ -40,9 +47,12 @@ const RawMaterialExport = () => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    // Hỏi thư mục lưu TRƯỚC khi làm gì — huỷ chọn = huỷ thao tác.
+    const dir = await pickFolder();
+    if (!dir) return;
     const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
     const baseName = file.name.replace(/\.csv$/i, "");
-    mutation.mutate({ bytes, baseName });
+    mutation.mutate({ bytes, baseName, dir });
   };
 
   return (
@@ -68,7 +78,8 @@ const RawMaterialExport = () => {
           <DialogHeader>
             <DialogTitle>Kết quả tải COA</DialogTitle>
             <DialogDescription>
-              Đã tải {result?.downloaded ?? 0} COA về Downloads.
+              Đã tải {result?.downloaded ?? 0} COA
+              {result?.path ? ` → ${result.path}` : ""}.
             </DialogDescription>
           </DialogHeader>
 

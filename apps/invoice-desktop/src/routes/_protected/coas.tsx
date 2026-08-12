@@ -1,6 +1,5 @@
 import { DataTable } from "@/components/data-table";
 import RawMaterialDialog from "@/components/raw_material_dialog";
-import RawMaterialImport from "@/components/raw_material_import";
 import RawMaterialExport from "@/components/raw_material_export";
 import { Button } from "@/components/ui/button";
 import {
@@ -176,7 +175,7 @@ function RouteComponent() {
   const columns = React.useMemo(() => makeColumns(setEditing), []);
 
   return (
-    <div className="container mx-auto py-10 px-4 space-y-4">
+    <div className="container mx-auto p-4 space-y-4 pb-10">
       <div className="flex items-center justify-between gap-4">
         <InputGroup className="max-w-xs">
           <InputGroupInput
@@ -191,7 +190,6 @@ function RouteComponent() {
 
         <div className="flex items-center gap-2">
           <RawMaterialExport />
-          <RawMaterialImport />
           <RawMaterialDialog />
         </div>
       </div>

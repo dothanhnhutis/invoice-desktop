@@ -557,7 +557,7 @@ function RouteComponent() {
 
   return (
     <div className="container @container mx-auto">
-      <div className="flex flex-1 flex-col gap-4 p-4">
+      <div className="flex flex-1 flex-col gap-4 p-4 pb-10">
         {invoices.isError && (
           <div className="rounded-xl border border-red-500 bg-red-500/10 p-3 text-sm text-red-500">
             Lỗi tải danh sách hoá đơn: {String(invoices.error)}

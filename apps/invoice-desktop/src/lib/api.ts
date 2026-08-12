@@ -7,6 +7,33 @@ export async function pickFolder(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+/**
+ * Mở hộp thoại chọn 1 file, trả ĐƯỜNG DẪN (không đọc bytes) — dùng khi file có thể rất lớn:
+ * đẩy bytes qua cầu IPC bị mã hoá thành mảng số JSON (~4× dung lượng).
+ */
+export async function pickFile(
+  name: string,
+  extensions: string[],
+): Promise<string | null> {
+  const selected = await open({
+    multiple: false,
+    filters: [{ name, extensions }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** Mở hộp thoại chọn NHIỀU file, trả danh sách đường dẫn (rỗng khi huỷ). */
+export async function pickFiles(
+  name: string,
+  extensions: string[],
+): Promise<string[]> {
+  const selected = await open({
+    multiple: true,
+    filters: [{ name, extensions }],
+  });
+  return Array.isArray(selected) ? selected : [];
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly kind: string,
@@ -189,19 +216,18 @@ export type InvoiceCsvProgress = {
   label: string;
 };
 
-export type ImportResult = {
-  created: number;
-  duplicates: string[];
-  invalid: { line: number; reason: string }[];
+/** 1 file COA ứng viên (chưa lưu) do `scan_coa_files` trả về. */
+export type CoaFileEntry = {
+  path: string;
+  name: string;
 };
 
-export type NewCoaInput = {
-  raw_material_id: number;
+/** 1 dòng trong bảng nhập COA hàng loạt: đường dẫn file gốc + số lô/ngày đã gõ. */
+export type CoaPathInput = {
+  path: string;
   lot_no: string;
   manufacture_date: string | null;
   expiration_date: string | null;
-  file_name: string;
-  file_bytes: number[];
 };
 
 export type CoaBulkResult = {
@@ -221,6 +247,21 @@ export type ExportResult = {
   downloaded: number;
   path: string | null;
   not_found: { line: number; code: string; lot_no: string; reason: string }[];
+};
+
+export type BackupResult = {
+  raw_materials: number;
+  coas: number;
+  missing_files: string[]; // COA có bản ghi nhưng file đã mất trên đĩa
+  path: string;
+};
+
+export type RestoreResult = {
+  materials_created: number;
+  materials_matched: number;
+  coas_added: number;
+  coas_skipped: number;
+  errors: { code: string; lot_no: string; reason: string }[];
 };
 
 export const api = {
@@ -263,27 +304,33 @@ export const api = {
     call<RawMaterial>("create_raw_material", { input }),
   updateRawMaterial: (id: number, input: NewRawMaterial) =>
     call<RawMaterial>("update_raw_material", { id, input }),
-  /** Nhập nguyên liệu hàng loạt từ nội dung file CSV (bytes). */
-  importRawMaterials: (csvBytes: number[]) =>
-    call<ImportResult>("import_raw_materials", { csvBytes }),
   listCoas: (rawMaterialId: number) =>
     call<Coa[]>("list_coas", { rawMaterialId }),
-  createCoa: (payload: NewCoaInput) => call<Coa>("create_coa", { payload }),
-  /** Tạo nhiều COA cùng lúc (upload cả thư mục). */
-  createCoasBulk: (payloads: NewCoaInput[]) =>
-    call<CoaBulkResult>("create_coas_bulk", { payloads }),
+  /** Quét file/thư mục (kéo-thả hoặc hộp thoại) → danh sách file COA hợp lệ, đã khử trùng. */
+  scanCoaFiles: (paths: string[]) =>
+    call<CoaFileEntry[]>("scan_coa_files", { paths }),
+  /** Tạo nhiều COA cùng lúc từ đường dẫn — Rust tự đọc bytes, không đẩy file qua IPC. */
+  createCoasBulkFromPaths: (rawMaterialId: number, items: CoaPathInput[]) =>
+    call<CoaBulkResult>("create_coas_bulk_from_paths", { rawMaterialId, items }),
   readCoaFile: (path: string) => call<number[]>("read_coa_file", { path }),
   openCoaFile: (path: string) => call<void>("open_coa_file", { path }),
-  /** Mở 1 file (bytes, chưa lưu) bằng app ngoài để xem trước. */
-  openBytesExternal: (fileName: string, fileBytes: number[]) =>
-    call<void>("open_bytes_external", { fileName, fileBytes }),
+  /** Mở 1 file theo đường dẫn tuyệt đối (COA chưa lưu) bằng app ngoài để xem trước. */
+  openPathExternal: (path: string) => call<void>("open_path_external", { path }),
   deleteCoa: (id: number) => call<void>("delete_coa", { id }),
-  /** Tải các COA đã chọn về Downloads (1 file: copy; nhiều: .zip). Trả đường dẫn kết quả. */
-  downloadCoas: (ids: number[], baseName?: string) =>
-    call<string>("download_coas", { ids, baseName }),
-  /** Tải COA theo danh sách CSV (code, lot_no, [manufacture_date], [expiration_date]). */
-  downloadCoasFromCsv: (csvBytes: number[], baseName?: string) =>
-    call<ExportResult>("download_coas_from_csv", { csvBytes, baseName }),
+  /** Tải các COA đã chọn về thư mục `dir` (1 file: copy; nhiều: .zip). Trả đường dẫn kết quả. */
+  downloadCoas: (ids: number[], baseName: string | undefined, dir: string) =>
+    call<string>("download_coas", { ids, baseName, dir }),
+  /** Tải COA theo danh sách CSV (code, lot_no, [manufacture_date], [expiration_date]) về `dir`. */
+  downloadCoasFromCsv: (
+    csvBytes: number[],
+    baseName: string | undefined,
+    dir: string,
+  ) => call<ExportResult>("download_coas_from_csv", { csvBytes, baseName, dir }),
+  /** Sao lưu toàn bộ Nguyên liệu & COA ra 1 file .zip trong thư mục `dir`. */
+  backupCoas: (dir: string) => call<BackupResult>("backup_coas", { dir }),
+  /** Nạp file sao lưu: GỘP THÊM, không xoá gì; COA trùng thì bỏ qua. */
+  restoreCoas: (zipPath: string) =>
+    call<RestoreResult>("restore_coas", { zipPath }),
   /** Cờ bật/tắt module Quản lý nguyên liệu & COA. */
   getFeatureRawMaterials: () => call<boolean>("get_feature_raw_materials"),
   /** Bật/tắt module. Khi tắt (false) backend xoá hết dữ liệu + file COA. */
