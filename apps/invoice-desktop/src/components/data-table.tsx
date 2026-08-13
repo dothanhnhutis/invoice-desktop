@@ -8,6 +8,7 @@ import {
   flexRender,
   getCoreRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
@@ -46,6 +47,8 @@ interface DataTableProps<TData, TValue> {
   pageCount?: number;
   /** Bật phân trang phía client (table tự quản lý, dùng khi đã tải hết dữ liệu). */
   enableClientPagination?: boolean;
+  /** Bật sắp xếp phía client. Cột phải có accessor; header tự lo nút bấm (xem SortHeader). */
+  enableSorting?: boolean;
   /** Bật chọn dòng (checkbox). Truyền kèm rowSelection/onRowSelectionChange/getRowId. */
   enableRowSelection?: boolean;
   rowSelection?: RowSelectionState;
@@ -88,6 +91,7 @@ export function DataTable<TData, TValue>({
   onPaginationChange,
   pageCount,
   enableClientPagination = false,
+  enableSorting = false,
   enableRowSelection = false,
   rowSelection,
   onRowSelectionChange,
@@ -111,6 +115,8 @@ export function DataTable<TData, TValue>({
     ...(enableClientPagination
       ? { getPaginationRowModel: getPaginationRowModel() }
       : {}),
+    // Không truyền onSortingChange -> TanStack tự giữ state sắp xếp (Shift+bấm = xếp chồng cột).
+    ...(enableSorting ? { getSortedRowModel: getSortedRowModel() } : {}),
     ...(manualPagination
       ? { manualPagination: true, pageCount, onPaginationChange }
       : {}),

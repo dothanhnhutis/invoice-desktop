@@ -222,8 +222,9 @@ export type CoaFileEntry = {
   name: string;
 };
 
-/** 1 dòng trong bảng nhập COA hàng loạt: đường dẫn file gốc + số lô/ngày đã gõ. */
+/** 1 dòng trong bảng nhập COA hàng loạt: nguyên liệu + đường dẫn file gốc + số lô/ngày đã gõ. */
 export type CoaPathInput = {
+  raw_material_id: number;
   path: string;
   lot_no: string;
   manufacture_date: string | null;
@@ -288,6 +289,9 @@ export const api = {
       baseName,
       dir,
     }),
+  /** Lưu file CSV mẫu (đúng cột mà `downloadInvoicesFromCsv` cần) vào `dir`. Trả đường dẫn file. */
+  saveInvoiceCsvTemplate: (dir: string) =>
+    call<string>("save_invoice_csv_template", { dir }),
   listRawMaterials: (
     {
       q,
@@ -309,9 +313,12 @@ export const api = {
   /** Quét file/thư mục (kéo-thả hoặc hộp thoại) → danh sách file COA hợp lệ, đã khử trùng. */
   scanCoaFiles: (paths: string[]) =>
     call<CoaFileEntry[]>("scan_coa_files", { paths }),
-  /** Tạo nhiều COA cùng lúc từ đường dẫn — Rust tự đọc bytes, không đẩy file qua IPC. */
-  createCoasBulkFromPaths: (rawMaterialId: number, items: CoaPathInput[]) =>
-    call<CoaBulkResult>("create_coas_bulk_from_paths", { rawMaterialId, items }),
+  /**
+   * Tạo nhiều COA cùng lúc từ đường dẫn — Rust tự đọc bytes, không đẩy file qua IPC.
+   * Mỗi dòng mang `raw_material_id` riêng ⇒ 1 lần nhập gom được COA của nhiều nguyên liệu.
+   */
+  createCoasBulkFromPaths: (items: CoaPathInput[]) =>
+    call<CoaBulkResult>("create_coas_bulk_from_paths", { items }),
   readCoaFile: (path: string) => call<number[]>("read_coa_file", { path }),
   openCoaFile: (path: string) => call<void>("open_coa_file", { path }),
   /** Mở 1 file theo đường dẫn tuyệt đối (COA chưa lưu) bằng app ngoài để xem trước. */
@@ -326,6 +333,9 @@ export const api = {
     baseName: string | undefined,
     dir: string,
   ) => call<ExportResult>("download_coas_from_csv", { csvBytes, baseName, dir }),
+  /** Lưu file CSV mẫu (đúng cột mà `downloadCoasFromCsv` cần) vào `dir`. Trả đường dẫn file. */
+  saveCoaCsvTemplate: (dir: string) =>
+    call<string>("save_coa_csv_template", { dir }),
   /** Sao lưu toàn bộ Nguyên liệu & COA ra 1 file .zip trong thư mục `dir`. */
   backupCoas: (dir: string) => call<BackupResult>("backup_coas", { dir }),
   /** Nạp file sao lưu: GỘP THÊM, không xoá gì; COA trùng thì bỏ qua. */

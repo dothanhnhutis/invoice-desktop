@@ -434,6 +434,18 @@ struct InvoiceCsvProgress {
 /// CSV vài trăm dòng bắn liên tục rất dễ bị chặn. Không đáng kể so với ~2-4s render PDF mỗi hóa đơn.
 const CSV_THROTTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// Nội dung file CSV mẫu cho "Tải theo CSV". ⚠️ Cột phải khớp bộ đọc header của
+/// `download_invoices_from_csv` — sửa parser thì sửa luôn ở đây.
+const INVOICE_CSV_TEMPLATE: &str = "nbmst,khhdon,shdon,khmshdon\n\
+                                    0100109106,C26TAA,1234,1\n\
+                                    0301234567,C26TBB,56,1\n";
+
+/// Ghi file CSV mẫu cho tải hóa đơn vào thư mục người dùng chọn. Trả đường dẫn file.
+#[tauri::command]
+fn save_invoice_csv_template(app: tauri::AppHandle, dir: String) -> Result<String, String> {
+    write_csv_template(&app, &dir, "mau-tai-hoa-don", INVOICE_CSV_TEMPLATE)
+}
+
 /// Tải hàng loạt hóa đơn theo file CSV cột `nbmst,khhdon,shdon[,khmshdon]` — đúng 4 khóa mà
 /// `/export-xml` cần, nên **không** đòi hóa đơn phải có sẵn trong DB (khác `download_invoices`).
 /// Mỗi hóa đơn ra cặp `<khhdon>_<shdon>.pdf` + `.xml`; hơn 1 file thì nén thành `<tên CSV>.zip`
@@ -1215,9 +1227,12 @@ fn scan_coa_files(paths: Vec<String>) -> Result<Vec<CoaFileEntry>, String> {
     Ok(out)
 }
 
-/// 1 dòng trong bảng nhập COA hàng loạt: đường dẫn file gốc + số lô/ngày người dùng gõ.
+/// 1 dòng trong bảng nhập COA hàng loạt: nguyên liệu + đường dẫn file gốc + số lô/ngày người dùng gõ.
+/// `raw_material_id` nằm ở TỪNG dòng (không phải tham số của lệnh) để 1 lần nhập gom được COA của
+/// nhiều nguyên liệu khác nhau; hộp thoại ở trang chi tiết chỉ việc điền cùng 1 id cho mọi dòng.
 #[derive(serde::Deserialize)]
 struct CoaPathInput {
+    raw_material_id: i64,
     path: String,
     lot_no: String,
     manufacture_date: Option<String>,
@@ -1230,7 +1245,6 @@ struct CoaPathInput {
 fn create_coas_bulk_from_paths(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    raw_material_id: i64,
     items: Vec<CoaPathInput>,
 ) -> Result<CoaBulkResult, String> {
     let mut created = 0usize;
@@ -1253,7 +1267,7 @@ fn create_coas_bulk_from_paths(
             }
         };
         let payload = CreateCoaInput {
-            raw_material_id,
+            raw_material_id: it.raw_material_id,
             lot_no: it.lot_no.clone(),
             manufacture_date: it.manufacture_date.clone(),
             expiration_date: it.expiration_date.clone(),
@@ -1550,6 +1564,37 @@ struct ExportResult {
     downloaded: usize,
     path: Option<String>,
     not_found: Vec<NotFoundRow>,
+}
+
+/// Nội dung file CSV mẫu cho "Tải COA". ⚠️ Cột phải khớp bộ đọc header của
+/// `download_coas_from_csv` — sửa parser thì sửa luôn ở đây.
+const COA_CSV_TEMPLATE: &str = "code,lot_no,manufacture_date,expiration_date\n\
+                                ICHRM-0001,LOT-2026-01,15/01/2026,15/01/2028\n\
+                                ICHRM-0002,LOT-2026-02,01/2026,\n";
+
+/// Ghi 1 file CSV mẫu vào thư mục người dùng chọn rồi mở thư mục đó. Trả đường dẫn file.
+fn write_csv_template(
+    app: &tauri::AppHandle,
+    dir: &str,
+    base: &str,
+    content: &str,
+) -> Result<String, String> {
+    let out_dir = std::path::PathBuf::from(dir);
+    if !out_dir.is_dir() {
+        return Err("Thư mục lưu không hợp lệ".into());
+    }
+    let path = unique_path(&out_dir, base, ".csv");
+    // BOM UTF-8 để Excel mở đúng bảng mã (chính parser cũng bỏ qua BOM khi đọc lại).
+    std::fs::write(&path, format!("\u{FEFF}{content}")).map_err(|e| e.to_string())?;
+    let _ = app
+        .opener()
+        .open_path(out_dir.to_string_lossy().to_string(), None::<String>);
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_coa_csv_template(app: tauri::AppHandle, dir: String) -> Result<String, String> {
+    write_csv_template(&app, &dir, "mau-tai-coa", COA_CSV_TEMPLATE)
 }
 
 /// Tải COA theo danh sách CSV `code,lot_no[,manufacture_date][,expiration_date]`.
@@ -1853,6 +1898,7 @@ pub fn run() {
             get_invoice_detail,
             download_invoices,
             download_invoices_from_csv,
+            save_invoice_csv_template,
             get_raw_material_by_id,
             list_raw_materials,
             create_raw_material,
@@ -1866,6 +1912,7 @@ pub fn run() {
             delete_coa,
             download_coas,
             download_coas_from_csv,
+            save_coa_csv_template,
             backup_coas,
             restore_coas,
             get_floor,

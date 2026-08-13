@@ -27,6 +27,26 @@ export function vnDateToIso(s: string): string | null {
 }
 
 /**
+ * Khóa so sánh ngày COA → số `yyyymmdd` (vd `15/01/2026` → 20260115). Ngày lưu là TEXT tự do
+ * (dd/mm/yyyy, mm/yyyy, hoặc ISO của dữ liệu cũ) nên so sánh chuỗi trực tiếp sẽ SAI thứ tự.
+ * Chỉ có tháng/năm → ngày = 00 (đứng trước mọi ngày cụ thể trong cùng tháng).
+ * Rỗng/không parse được → `undefined` (dùng với `sortUndefined: "last"`).
+ */
+export function vnDateSortKey(s: string | null | undefined): number | undefined {
+  if (!s) return undefined;
+  const t = s.trim();
+  const dmy = t.match(DMY);
+  if (dmy) return +dmy[3] * 10000 + +dmy[2] * 100 + +dmy[1];
+  const my = t.match(MY);
+  if (my) return +my[2] * 10000 + +my[1] * 100;
+  const ymd = t.match(ISO_YMD);
+  if (ymd) return +ymd[1] * 10000 + +ymd[2] * 100 + +ymd[3];
+  const ym = t.match(ISO_YM);
+  if (ym) return +ym[1] * 10000 + +ym[2] * 100;
+  return undefined;
+}
+
+/**
  * Hiển thị ngày COA dạng dd/mm/yyyy (hoặc mm/yyyy). Dữ liệu cũ lưu ISO (yyyy-mm-dd / yyyy-mm)
  * sẽ được đổi sang cho đồng nhất. Rỗng/null → "-".
  */

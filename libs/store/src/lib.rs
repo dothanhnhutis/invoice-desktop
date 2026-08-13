@@ -389,7 +389,7 @@ impl Db {
         .optional()
     }
 
-    /// Danh sách nguyên liệu còn hiệu lực (lọc theo `q` trên code/name).
+    /// Danh sách nguyên liệu còn hiệu lực (lọc theo `q` trên code/name/producer).
     pub fn list_raw_materials(&self, f: &RawMaterialFilter) -> Result<Vec<RawMaterial>> {
         let mut sql = String::from(
             "SELECT id, code, name, producer, country_of_origin, deleted_at, created_at, updated_at \
@@ -397,9 +397,12 @@ impl Db {
         );
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+        // ⚠️ Sửa mệnh đề này thì sửa y hệt ở `count_raw_materials` — lệch nhau là tổng số đếm
+        // không khớp danh sách, phân trang sinh trang trống.
         if let Some(q) = &f.q {
-            sql.push_str(" AND (code LIKE ? OR name LIKE ?)");
+            sql.push_str(" AND (code LIKE ? OR name LIKE ? OR producer LIKE ?)");
             let like = format!("%{q}%");
+            args.push(Box::new(like.clone()));
             args.push(Box::new(like.clone()));
             args.push(Box::new(like));
         }
@@ -421,15 +424,18 @@ impl Db {
         rows.collect()
     }
 
-    /// Đếm tổng số nguyên liệu còn hiệu lực khớp bộ lọc `q` (bỏ qua limit/offset).
+    /// Đếm tổng số nguyên liệu còn hiệu lực khớp bộ lọc `q` trên code/name/producer
+    /// (bỏ qua limit/offset).
     pub fn count_raw_materials(&self, f: &RawMaterialFilter) -> Result<i64> {
         let mut sql =
             String::from("SELECT COUNT(*) FROM raw_materials WHERE deleted_at IS NULL");
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+        // ⚠️ Phải khớp từng chữ với mệnh đề lọc ở `list_raw_materials`.
         if let Some(q) = &f.q {
-            sql.push_str(" AND (code LIKE ? OR name LIKE ?)");
+            sql.push_str(" AND (code LIKE ? OR name LIKE ? OR producer LIKE ?)");
             let like = format!("%{q}%");
+            args.push(Box::new(like.clone()));
             args.push(Box::new(like.clone()));
             args.push(Box::new(like));
         }
@@ -1086,10 +1092,18 @@ mod tests {
     }
 
     #[test]
-    fn filter_q_matches_code_or_name() {
+    fn filter_q_matches_code_name_or_producer() {
         let db = Db::open_in_memory().unwrap();
         db.insert_raw_material(&new_rm("ICHRM-0248", "Bakuchiol")).unwrap();
         db.insert_raw_material(&new_rm("ICHRM-0249", "Activoil")).unwrap();
+        // `new_rm` gán cứng producer "Acme" -> dựng tay để có nhà sản xuất riêng.
+        db.insert_raw_material(&NewRawMaterial {
+            code: "ICHRM-0250".into(),
+            name: "Vitamin C".into(),
+            producer: "DSM Nutritional".into(),
+            country_of_origin: Some("Thụy Sĩ".into()),
+        })
+        .unwrap();
 
         // khớp theo code
         let by_code = db
@@ -1110,6 +1124,25 @@ mod tests {
             .unwrap();
         assert_eq!(by_name.len(), 1);
         assert_eq!(by_name[0].name, "Activoil");
+
+        // khớp theo nhà sản xuất (ô chọn nguyên liệu có hiện cột này nên phải tìm được)
+        let by_producer = db
+            .list_raw_materials(&RawMaterialFilter {
+                q: Some("DSM".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(by_producer.len(), 1);
+        assert_eq!(by_producer[0].code, "ICHRM-0250");
+        // Đếm phải khớp danh sách, nếu không phân trang sẽ sinh trang trống.
+        assert_eq!(
+            db.count_raw_materials(&RawMaterialFilter {
+                q: Some("DSM".into()),
+                ..Default::default()
+            })
+            .unwrap(),
+            1
+        );
     }
 
     #[test]

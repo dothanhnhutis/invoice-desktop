@@ -171,11 +171,14 @@ errors}`** (tải hàng loạt theo CSV — xem 6.6), `get_floor`, `set_floor(da
 Plugin thêm: `tauri_plugin_dialog` (hộp thoại chọn thư mục lưu — cần `dialog:default` trong
 `capabilities/default.json`).
 
-Nguyên liệu: `get_raw_material_by_id`, `list_raw_materials(filter)`, `create_raw_material`,
+Nguyên liệu: `get_raw_material_by_id`, `list_raw_materials(filter)` (⚠️ `filter.q` khớp
+**code/name/producer**; `Db::list_raw_materials` và `Db::count_raw_materials` phải dùng **cùng một**
+mệnh đề lọc, lệch là tổng đếm khác danh sách → phân trang sinh trang trống), `create_raw_material`,
 `update_raw_material`.
 
 COA: `list_coas`, `scan_coa_files(paths)` (quét file/thư mục → danh sách file COA hợp lệ),
-`create_coas_bulk_from_paths(raw_material_id, items)`, `read_coa_file`, `open_coa_file`,
+`create_coas_bulk_from_paths(items)` (⚠️ `raw_material_id` nằm ở **từng item**, không phải tham số
+chung — 1 lần nhập gom được COA của nhiều nguyên liệu), `read_coa_file`, `open_coa_file`,
 `open_path_external(path)` (mở app ngoài theo đường dẫn tuyệt đối — xem COA CHƯA lưu),
 `delete_coa`, `download_coas(ids, base_name, dir)`, `download_coas_from_csv(csv_bytes, base_name, dir)`.
 
@@ -229,7 +232,14 @@ Quản lý nguyên liệu thô + phiếu kiểm nghiệm (COA — Certificate of
   `dd/MM/yyyy`, submit `format(date,"yyyy-MM-dd")`) — không còn ô text ở login-dialog/purchase.
 - **Thêm COA**: 1 dialog duy nhất
   ([coa_bulk_dialog.tsx](apps/invoice-desktop/src/components/coa_bulk_dialog.tsx)) với **2 đường vào** —
-  kéo-thả file/thư mục, và nút **Chọn file** (nhiều file). ⚠️ **Cả thư mục CHỈ nạp được bằng kéo-thả**
+  kéo-thả file/thư mục, và nút **Chọn file** (nhiều file). Dialog có **2 chế độ** theo prop
+  `rawMaterialId`: có id (mở từ trang chi tiết) → mọi dòng thuộc nguyên liệu đó; **không** có id (nút
+  **Nhập COA** ở thanh công cụ `/coas`) → hiện thêm cột **Nguyên liệu** dùng
+  [raw_material_picker.tsx](apps/invoice-desktop/src/components/raw_material_picker.tsx)
+  (Popover + ô tìm debounce 500ms → `list_raw_materials`, nạp 20 kết quả mỗi lần; mỗi mục hiện
+  **tên** / *nhà sản xuất · quốc gia* / mã nhỏ mờ) kèm ô "điền nhanh"
+  + nút *Điền dòng trống* / *Ghi đè tất cả*. Lưu xong `invalidateQueries(["coas"])` (khớp tiền tố) vì
+  một lần lưu chạm nhiều nguyên liệu. ⚠️ **Cả thư mục CHỈ nạp được bằng kéo-thả**
   — chủ ý (`pickFolders` đã gỡ), đừng thêm lại nút chọn thư mục. Mọi lần thêm đều **cộng dồn** vào
   bảng (khử trùng theo đường dẫn) nên gom được COA nằm rải ở nhiều thư mục mà không mất số lô/ngày
   đang gõ dở. Tất cả đi qua `addPaths` → `scan_coa_files` (Rust duyệt **đệ

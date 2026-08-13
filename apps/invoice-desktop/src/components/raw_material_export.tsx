@@ -10,6 +10,7 @@ import {
 } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { DownloadIcon } from "lucide-react";
@@ -55,6 +56,18 @@ const RawMaterialExport = () => {
     mutation.mutate({ bytes, baseName, dir });
   };
 
+  // Tải file CSV mẫu để người dùng biết cần những cột nào.
+  const onDownloadTemplate = async () => {
+    const dir = await pickFolder();
+    if (!dir) return;
+    try {
+      const path = await api.saveCoaCsvTemplate(dir);
+      toast.success(`Đã lưu file mẫu → ${path}`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    }
+  };
+
   return (
     <>
       <input
@@ -64,14 +77,33 @@ const RawMaterialExport = () => {
         hidden
         onChange={onPick}
       />
-      <Button
-        variant="outline"
-        disabled={mutation.isPending}
-        onClick={() => inputRef.current?.click()}
-      >
-        {mutation.isPending ? <Spinner /> : <DownloadIcon />}
-        <span className="hidden sm:inline">Tải COA</span>
-      </Button>
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="outline"
+              disabled={mutation.isPending}
+              onClick={() => inputRef.current?.click()}
+            >
+              {mutation.isPending ? <Spinner /> : <DownloadIcon />}
+              <span className="hidden sm:inline">Tải COA</span>
+            </Button>
+          }
+        />
+        <TooltipContent>
+          <div className="flex flex-col">
+            <p>Chọn file csv chứa danh sách COA để tải về.</p>
+            <p
+              aria-label="Tải file CSV mẫu"
+              className="hover:underline cursor-pointer"
+              onClick={onDownloadTemplate}
+            >
+              Tải file mẫu
+            </p>
+          </div>
+        </TooltipContent>
+      </Tooltip>
 
       <Dialog open={!!result} onOpenChange={(o) => !o && setResult(null)}>
         <DialogContent className="sm:max-w-md">

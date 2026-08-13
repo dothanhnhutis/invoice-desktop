@@ -15,6 +15,7 @@ import {
 } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import {
   ApiError,
   api,
@@ -81,6 +82,18 @@ const InvoiceCsvDownload = () => {
     mutation.mutate({ bytes, baseName, dir });
   };
 
+  // Tải file CSV mẫu để người dùng biết cần những cột nào.
+  const onDownloadTemplate = async () => {
+    const dir = await pickFolder();
+    if (!dir) return;
+    try {
+      const path = await api.saveInvoiceCsvTemplate(dir);
+      toast.success(`Đã lưu file mẫu → ${path}`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    }
+  };
+
   return (
     <>
       <input
@@ -90,16 +103,34 @@ const InvoiceCsvDownload = () => {
         hidden
         onChange={onPick}
       />
-      <Button
-        variant="outline"
-        disabled={mutation.isPending}
-        onClick={() => inputRef.current?.click()}
-      >
-        {mutation.isPending ? <Spinner /> : <FileUpIcon />}
-        {mutation.isPending && progress
-          ? `Đang tải ${progress.done}/${progress.total}`
-          : "Tải theo CSV"}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="outline"
+              disabled={mutation.isPending}
+              onClick={() => inputRef.current?.click()}
+            >
+              {mutation.isPending ? <Spinner /> : <FileUpIcon />}
+              {mutation.isPending && progress
+                ? `Đang tải ${progress.done}/${progress.total}`
+                : "Tải theo CSV"}
+            </Button>
+          }
+        />
+        <TooltipContent>
+          <div className="flex flex-col">
+            <p>Chọn file csv chứa danh sách hoá đơn để tải về.</p>
+            <p
+              aria-label="Tải file CSV mẫu"
+              className="hover:underline cursor-pointer"
+              onClick={onDownloadTemplate}
+            >
+              Tải file mẫu
+            </p>
+          </div>
+        </TooltipContent>
+      </Tooltip>
 
       <Dialog open={!!result} onOpenChange={(o) => !o && setResult(null)}>
         <DialogContent className="sm:max-w-md">

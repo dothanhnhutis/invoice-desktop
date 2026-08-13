@@ -24,7 +24,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { toast } from "sonner";
 import { FilePlusIcon, FolderUpIcon, Trash2Icon } from "lucide-react";
-import { ApiError, api, pickFiles } from "@/lib/api";
+import RawMaterialPicker from "./raw_material_picker";
+import { ApiError, api, pickFiles, type RawMaterial } from "@/lib/api";
 import { isVnDate } from "@/lib/date";
 
 /** Khớp `COA_EXTS` phía Rust — chỉ dùng để lọc trong hộp thoại chọn file. */
@@ -33,20 +34,31 @@ const COA_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "pdf"];
 type Row = {
   path: string;
   name: string;
+  /** Chỉ dùng ở chế độ nhiều nguyên liệu (mở từ danh sách); giữ cả object để hiện `mã — tên`. */
+  material: RawMaterial | null;
   lot_no: string;
   manufacture_date: string | null;
   expiration_date: string | null;
 };
 
 export type CoaBulkDialogProps = {
-  rawMaterialId: number;
+  /** Có id (mở từ trang chi tiết) → mọi COA thuộc nguyên liệu này. Không có (mở từ danh sách)
+   *  → mỗi dòng tự chọn nguyên liệu, 1 lần nhập gom được COA của nhiều nguyên liệu. */
+  rawMaterialId?: number;
 };
 
 const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
   const [open, setOpen] = React.useState(false);
   const [rows, setRows] = React.useState<Row[]>([]);
   const [dragging, setDragging] = React.useState(false);
+  // Nguyên liệu ở thanh trên bảng: chọn 1 lần rồi điền cho cả loạt (chỉ chế độ nhiều nguyên liệu).
+  const [bulkMaterial, setBulkMaterial] = React.useState<RawMaterial | null>(
+    null,
+  );
   const queryClient = useQueryClient();
+
+  /** Mở từ danh sách nguyên liệu ⇒ phải hỏi nguyên liệu cho từng dòng. */
+  const multi = rawMaterialId === undefined;
 
   /**
    * Đường vào DUY NHẤT cho mọi cách thêm file (kéo-thả / chọn file / chọn thư mục):
@@ -81,6 +93,7 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
         ...fresh.map((f) => ({
           path: f.path,
           name: f.name,
+          material: null,
           lot_no: "",
           manufacture_date: null,
           expiration_date: null,
@@ -113,7 +126,9 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
   }, [open, addPaths]);
 
   const update = (i: number, patch: Partial<Row>) =>
-    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+    setRows((prev) =>
+      prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)),
+    );
 
   const removeRow = (i: number) =>
     setRows((prev) => prev.filter((_, idx) => idx !== i));
@@ -130,19 +145,36 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
     }
   };
 
+  /** Điền nguyên liệu ở thanh trên cho cả loạt — kéo nguyên thư mục của 1 nguyên liệu thì chỉ chọn 1 lần. */
+  const applyBulkMaterial = (overwrite: boolean) =>
+    setRows((prev) =>
+      prev.map((r) =>
+        overwrite || !r.material ? { ...r, material: bulkMaterial } : r,
+      ),
+    );
+
   const mutation = useMutation({
     mutationFn: () =>
       api.createCoasBulkFromPaths(
-        rawMaterialId,
-        rows.map((r) => ({
-          path: r.path,
-          lot_no: r.lot_no.trim(),
-          manufacture_date: r.manufacture_date || null,
-          expiration_date: r.expiration_date || null,
-        })),
+        // Dòng thiếu nguyên liệu đã bị `canSubmit` chặn từ trước; ở đây chỉ lọc cho chắc.
+        rows.flatMap((r) => {
+          const raw_material_id = rawMaterialId ?? r.material?.id;
+          return raw_material_id
+            ? [
+                {
+                  raw_material_id,
+                  path: r.path,
+                  lot_no: r.lot_no.trim(),
+                  manufacture_date: r.manufacture_date || null,
+                  expiration_date: r.expiration_date || null,
+                },
+              ]
+            : [];
+        }),
       ),
     onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ["coas", rawMaterialId] });
+      // Khớp tiền tố -> làm mới mọi ["coas", id] vì 1 lần lưu có thể chạm nhiều nguyên liệu.
+      queryClient.invalidateQueries({ queryKey: ["coas"] });
       toast.success(`Đã thêm ${res.created} COA`);
       if (res.errors.length) {
         toast.error(
@@ -159,20 +191,28 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
   });
 
   const missingLot = rows.filter((r) => !r.lot_no.trim()).length;
+  const missingMaterial = multi ? rows.filter((r) => !r.material).length : 0;
   const badDate = rows.filter(
     (r) =>
       (r.manufacture_date && !isVnDate(r.manufacture_date)) ||
       (r.expiration_date && !isVnDate(r.expiration_date)),
   ).length;
   const canSubmit =
-    rows.length > 0 && missingLot === 0 && badDate === 0 && !mutation.isPending;
+    rows.length > 0 &&
+    missingLot === 0 &&
+    missingMaterial === 0 &&
+    badDate === 0 &&
+    !mutation.isPending;
 
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
-        if (!o) setRows([]);
+        if (!o) {
+          setRows([]);
+          setBulkMaterial(null);
+        }
       }}
     >
       <DialogTrigger
@@ -183,12 +223,13 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
           </Button>
         }
       />
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent className={multi ? "sm:max-w-5xl" : "sm:max-w-3xl"}>
         <DialogHeader>
           <DialogTitle>Nhập COA</DialogTitle>
           <DialogDescription>
-            Kéo file/thư mục vào đây hoặc bấm nút để chọn — gom được từ nhiều thư
-            mục khác nhau. Nhập số lô và ngày cho từng file rồi lưu tất cả.
+            Kéo file/thư mục vào đây hoặc bấm nút để chọn — gom được từ nhiều
+            thư mục khác nhau. Nhập {multi ? "nguyên liệu, " : ""}số lô và ngày
+            cho từng file rồi lưu tất cả.
           </DialogDescription>
         </DialogHeader>
 
@@ -213,9 +254,15 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm text-muted-foreground">
                 {rows.length} file
+                {missingMaterial > 0 && (
+                  <span className="text-destructive">
+                    {" "}
+                    · {missingMaterial} dòng thiếu nguyên liệu
+                  </span>
+                )}
                 {missingLot > 0 && (
                   <span className="text-destructive">
                     {" "}
@@ -229,31 +276,68 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
                   </span>
                 )}
               </p>
-              <Button variant="outline" size="sm" onClick={addFiles}>
-                <FilePlusIcon />
-                Thêm file
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {multi && (
+                  <>
+                    <RawMaterialPicker
+                      value={bulkMaterial}
+                      onChange={setBulkMaterial}
+                      placeholder="Điền nhanh nguyên liệu"
+                      className="w-72"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!bulkMaterial || missingMaterial === 0}
+                      onClick={() => applyBulkMaterial(false)}
+                    >
+                      Điền dòng trống
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!bulkMaterial}
+                      onClick={() => applyBulkMaterial(true)}
+                    >
+                      Ghi đè tất cả
+                    </Button>
+                  </>
+                )}
+                <Button variant="outline" size="sm" onClick={addFiles}>
+                  <FilePlusIcon />
+                  Thêm file
+                </Button>
+              </div>
             </div>
 
+            {/* min-w-0: DialogContent là grid, ô lưới mặc định min-width:auto -> thiếu dòng này
+                bảng đội hộp thoại tràn ra ngoài màn hình thay vì cuộn.
+                overflow-visible cho div bọc của ui/table: để nó tự cuộn ngang thì thanh cuộn nằm ở
+                đáy bảng (phải cuộn dọc hết mới thấy) — dồn cả 2 chiều về khung 55vh này. */}
             <div
-              className={`max-h-[55vh] overflow-auto rounded-md border transition-colors ${
+              className={`max-h-[55vh] min-w-0 overflow-auto rounded-md border transition-colors **:data-[slot=table-container]:overflow-visible ${
                 dragging ? "border-primary bg-primary/5" : ""
               }`}
             >
               <Table>
                 <TableHeader>
+                  {/* min-w (không phải w): với table-layout auto thì w-* chỉ là gợi ý, màn hình
+                      hẹp là mọi cột bị bóp — min-width mới buộc bảng tràn ra để cuộn ngang. */}
                   <TableRow>
-                    <TableHead>Tên file</TableHead>
-                    <TableHead className="w-40">Số lô *</TableHead>
-                    <TableHead className="w-40">Ngày SX</TableHead>
-                    <TableHead className="w-40">HSD</TableHead>
+                    <TableHead className="min-w-55">Tên file</TableHead>
+                    {multi && (
+                      <TableHead className="min-w-72">Nguyên liệu *</TableHead>
+                    )}
+                    <TableHead className="min-w-40">Số lô *</TableHead>
+                    <TableHead className="min-w-36">Ngày SX</TableHead>
+                    <TableHead className="min-w-36">HSD</TableHead>
                     <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.map((r, i) => (
                     <TableRow key={r.path}>
-                      <TableCell className="max-w-[220px]" title={r.path}>
+                      <TableCell className="max-w-55" title={r.path}>
                         <button
                           type="button"
                           className="block max-w-full truncate text-left text-primary underline-offset-2 hover:underline"
@@ -262,12 +346,23 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
                           {r.name}
                         </button>
                       </TableCell>
+                      {multi && (
+                        <TableCell>
+                          <RawMaterialPicker
+                            value={r.material}
+                            invalid={!r.material}
+                            onChange={(m) => update(i, { material: m })}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>
                         <Input
                           value={r.lot_no}
                           aria-invalid={!r.lot_no.trim()}
                           placeholder="Số lô"
-                          onChange={(e) => update(i, { lot_no: e.target.value })}
+                          onChange={(e) =>
+                            update(i, { lot_no: e.target.value })
+                          }
                         />
                       </TableCell>
                       <TableCell>
@@ -275,10 +370,13 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
                           value={r.manufacture_date ?? ""}
                           placeholder="dd/mm/yyyy"
                           aria-invalid={
-                            !!r.manufacture_date && !isVnDate(r.manufacture_date)
+                            !!r.manufacture_date &&
+                            !isVnDate(r.manufacture_date)
                           }
                           onChange={(e) =>
-                            update(i, { manufacture_date: e.target.value || null })
+                            update(i, {
+                              manufacture_date: e.target.value || null,
+                            })
                           }
                         />
                       </TableCell>
@@ -290,7 +388,9 @@ const CoaBulkDialog = ({ rawMaterialId }: CoaBulkDialogProps) => {
                             !!r.expiration_date && !isVnDate(r.expiration_date)
                           }
                           onChange={(e) =>
-                            update(i, { expiration_date: e.target.value || null })
+                            update(i, {
+                              expiration_date: e.target.value || null,
+                            })
                           }
                         />
                       </TableCell>

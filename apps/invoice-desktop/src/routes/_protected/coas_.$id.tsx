@@ -21,14 +21,27 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ColumnDef, RowSelectionState } from "@tanstack/react-table";
-import { DownloadIcon, EllipsisIcon } from "lucide-react";
+import { Column, ColumnDef, RowSelectionState } from "@tanstack/react-table";
+import {
+  ArrowDownIcon,
+  ArrowUpDownIcon,
+  ArrowUpIcon,
+  DownloadIcon,
+  EllipsisIcon,
+  SearchIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import RawMaterialDialog from "@/components/raw_material_dialog";
 import CoaBulkDialog from "@/components/coa_bulk_dialog";
 import CoaViewerSheet from "@/components/coa_viewer_sheet";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
+import { useDebounce } from "@/hooks/use-debounce";
 import { api, pickFolder, type Coa } from "@/lib/api";
-import { formatVnDate } from "@/lib/date";
+import { formatVnDate, vnDateSortKey } from "@/lib/date";
 
 export const Route = createFileRoute("/_protected/coas_/$id")({
   beforeLoad: async ({ params }) => {
@@ -53,6 +66,41 @@ export const Route = createFileRoute("/_protected/coas_/$id")({
   loader: ({ context: { raw_material } }) => raw_material,
   component: RouteComponent,
 });
+
+/**
+ * Header bấm được để sắp xếp. `getToggleSortingHandler` tự hiểu phím Shift → giữ Shift bấm cột
+ * thứ hai là xếp chồng; khi đó hiện thêm số thứ tự ưu tiên của cột.
+ */
+function SortHeader({
+  column,
+  children,
+}: {
+  column: Column<Coa, unknown>;
+  children: React.ReactNode;
+}) {
+  const sorted = column.getIsSorted();
+  const order = column.getSortIndex();
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="-ml-2 h-8"
+      onClick={column.getToggleSortingHandler()}
+    >
+      {children}
+      {sorted === "asc" ? (
+        <ArrowUpIcon />
+      ) : sorted === "desc" ? (
+        <ArrowDownIcon />
+      ) : (
+        <ArrowUpDownIcon className="text-muted-foreground" />
+      )}
+      {order > 0 && (
+        <span className="text-xs text-muted-foreground">{order + 1}</span>
+      )}
+    </Button>
+  );
+}
 
 function makeCoaColumns(
   onView: (coa: Coa) => void,
@@ -79,10 +127,13 @@ function makeCoaColumns(
           onChange={row.getToggleSelectedHandler()}
         />
       ),
+      enableSorting: false,
     },
     {
       id: "lot_no",
-      header: () => <div>Số lô</div>,
+      // sortingFn mặc định là "alphanumeric" -> LOT2 đứng trước LOT10.
+      accessorFn: (c) => c.lot_no,
+      header: ({ column }) => <SortHeader column={column}>Số lô</SortHeader>,
       // Có file -> số lô là liên kết mở luôn file (thay cho cột "File" cũ).
       cell: ({ row }) =>
         row.original.path ? (
@@ -100,7 +151,12 @@ function makeCoaColumns(
     },
     {
       id: "manufacture_date",
-      header: () => <div>Ngày sản xuất</div>,
+      // Ngày lưu là TEXT tự do -> phải quy về số mới sắp xếp đúng thời gian.
+      accessorFn: (c) => vnDateSortKey(c.manufacture_date),
+      sortUndefined: "last", // COA thiếu ngày luôn nằm cuối
+      header: ({ column }) => (
+        <SortHeader column={column}>Ngày sản xuất</SortHeader>
+      ),
       cell: ({ row }) => (
         <p className="line-clamp-2 text-wrap">
           {formatVnDate(row.original.manufacture_date)}
@@ -109,7 +165,11 @@ function makeCoaColumns(
     },
     {
       id: "expiration_date",
-      header: () => <div>Hạn sử dụng</div>,
+      accessorFn: (c) => vnDateSortKey(c.expiration_date),
+      sortUndefined: "last",
+      header: ({ column }) => (
+        <SortHeader column={column}>Hạn sử dụng</SortHeader>
+      ),
       cell: ({ row }) => (
         <p className="line-clamp-2 text-wrap">
           {formatVnDate(row.original.expiration_date)}
@@ -146,6 +206,7 @@ function makeCoaColumns(
           </DropdownMenuContent>
         </DropdownMenu>
       ),
+      enableSorting: false,
     },
   ];
 }
@@ -162,6 +223,16 @@ function RouteComponent() {
 
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [viewing, setViewing] = React.useState<Coa | null>(null);
+
+  // Lọc theo số lô ở client (đã tải hết COA của nguyên liệu). Ô tìm hiện chữ ngay, chỉ kết quả
+  // lọc mới đợi ngừng gõ 500ms. Lọc KHÔNG bỏ tick: chọn vài lô, đổi từ khoá, chọn tiếp rồi tải cả.
+  const [qInput, setQInput] = React.useState("");
+  const q = useDebounce(qInput, 500);
+  const rows = React.useMemo(() => {
+    const all = coas.data ?? [];
+    const k = q.trim().toLowerCase();
+    return k ? all.filter((c) => c.lot_no.toLowerCase().includes(k)) : all;
+  }, [coas.data, q]);
 
   const deleteCoa = async (id: number) => {
     try {
@@ -252,11 +323,23 @@ function RouteComponent() {
               <CoaBulkDialog rawMaterialId={data.id} />
             </div>
           </div>
-          <FieldDescription>Danh sách COA của nguyên liệu</FieldDescription>
+          <div className="flex items-center justify-between gap-4">
+            <InputGroup className="max-w-xs">
+              <InputGroupInput
+                placeholder="Tìm theo số lô..."
+                value={qInput}
+                onChange={(e) => setQInput(e.target.value)}
+              />
+              <InputGroupAddon align="inline-end">
+                <SearchIcon />
+              </InputGroupAddon>
+            </InputGroup>
+          </div>
           <DataTable
             columns={columns}
-            data={coas.data ?? []}
+            data={rows}
             enableClientPagination
+            enableSorting
             enableRowSelection
             rowSelection={rowSelection}
             onRowSelectionChange={setRowSelection}

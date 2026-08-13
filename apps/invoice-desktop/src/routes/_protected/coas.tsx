@@ -1,4 +1,5 @@
 import { DataTable } from "@/components/data-table";
+import CoaBulkDialog from "@/components/coa_bulk_dialog";
 import RawMaterialDialog from "@/components/raw_material_dialog";
 import RawMaterialExport from "@/components/raw_material_export";
 import { Button } from "@/components/ui/button";
@@ -179,7 +180,7 @@ function RouteComponent() {
       <div className="flex items-center justify-between gap-4">
         <InputGroup className="max-w-xs">
           <InputGroupInput
-            placeholder="Tìm theo mã hoặc tên..."
+            placeholder="Tìm theo mã, tên hoặc nhà sản xuất..."
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
           />
@@ -190,6 +191,8 @@ function RouteComponent() {
 
         <div className="flex items-center gap-2">
           <RawMaterialExport />
+          {/* Không truyền rawMaterialId -> mỗi dòng tự chọn nguyên liệu. */}
+          <CoaBulkDialog />
           <RawMaterialDialog />
         </div>
       </div>
